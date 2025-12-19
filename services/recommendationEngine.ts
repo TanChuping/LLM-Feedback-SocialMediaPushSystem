@@ -11,22 +11,31 @@ export const calculateRelevanceScore = (post: Post, profile: UserProfile): { sco
   // Base score for recency/popularity simulation
   score += Math.log10(post.likes) * 5; 
 
-  // Check for dislikes (Penalty is very high to effectively filter them out/push them down)
-  const matchedDislikes = post.tags.filter(tag => profile.dislikeTags.includes(tag));
-  if (matchedDislikes.length > 0) {
-    score -= 500 * matchedDislikes.length;
-    reasons.push(`❌ Hit dislike tags: ${matchedDislikes.join(', ')}`);
-  }
+  // Check for dislikes (Penalty)
+  // UPDATED: Reduced multiplier from 20 to 12 to prevent "poison pills".
+  // If a user loves "Visa" but hates "Anxiety", a post with both should still have a fighting chance.
+  post.tags.forEach(postTag => {
+    const dislikeMatch = profile.dislikes.find(d => d.tag === postTag);
+    if (dislikeMatch) {
+      const penalty = dislikeMatch.weight * 12; 
+      score -= penalty;
+      reasons.push(`❌ Dislike '${postTag}' (-${penalty.toFixed(0)})`);
+    }
+  });
 
-  // Check for likes (Reward)
-  const matchedLikes = post.tags.filter(tag => profile.likeTags.includes(tag));
-  if (matchedLikes.length > 0) {
-    score += 100 * matchedLikes.length;
-    reasons.push(`✅ Hit interest tags: ${matchedLikes.join(', ')}`);
-  }
+  // Check for interests (Reward)
+  // UPDATED: Increased multiplier from 5 to 10.
+  // Strong interests should overpower mild dislikes.
+  post.tags.forEach(postTag => {
+    const interestMatch = profile.interests.find(i => i.tag === postTag);
+    if (interestMatch) {
+      const reward = interestMatch.weight * 10; 
+      score += reward;
+      reasons.push(`✅ Interest '${postTag}' (+${reward.toFixed(0)})`);
+    }
+  });
 
-  // Add a small random factor to simulate exploration (so order isn't identical every ms)
-  // In a real system, this is Bandit algorithms.
+  // Add a small random factor to simulate exploration
   score += Math.random() * 5;
 
   return {

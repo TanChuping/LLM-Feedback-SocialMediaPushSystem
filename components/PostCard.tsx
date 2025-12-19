@@ -1,13 +1,18 @@
 import React from 'react';
 import { Post } from '../types';
-import { MoreHorizontal, Heart, MessageSquare, ThumbsDown } from 'lucide-react';
+import { MoreHorizontal, Heart, MessageSquare } from 'lucide-react';
 
 interface PostCardProps {
   post: Post;
+  language: 'en' | 'zh';
   onNotInterested: (post: Post) => void;
 }
 
-export const PostCard: React.FC<PostCardProps> = ({ post, onNotInterested }) => {
+export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInterested }) => {
+  // Only show first 5 tags to prevent clutter, but the recommendation engine uses all of them.
+  const visibleTags = post.tags.slice(0, 5);
+  const remainingTags = post.tags.length - 5;
+
   return (
     <div className="bg-white rounded-xl p-4 mb-4 shadow-sm border border-gray-100 transition-all hover:shadow-md">
       <div className="flex justify-between items-start mb-3">
@@ -32,16 +37,21 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onNotInterested }) => 
 
       <div className="flex gap-4">
         <div className="flex-1">
-          <h3 className="text-lg font-bold text-gray-900 mb-1 leading-tight">{post.title}</h3>
+          <h3 className="text-lg font-bold text-gray-900 mb-1 leading-tight">{post.title[language]}</h3>
           <p className="text-gray-600 text-sm line-clamp-2 mb-3 leading-relaxed">
-            {post.content}
+            {post.content[language]}
           </p>
           <div className="flex flex-wrap gap-2 mb-3">
-            {post.tags.map(tag => (
+            {visibleTags.map(tag => (
               <span key={tag} className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-full">
                 #{tag}
               </span>
             ))}
+            {remainingTags > 0 && (
+              <span className="text-xs px-2 py-1 bg-gray-50 text-gray-400 rounded-full border border-gray-100">
+                +{remainingTags} more
+              </span>
+            )}
           </div>
         </div>
         {post.imageUrl && (

@@ -5,6 +5,7 @@ import { Post } from '../types';
 interface FeedbackModalProps {
   isOpen: boolean;
   post: Post | null;
+  language: 'en' | 'zh';
   onClose: () => void;
   onSubmit: (text: string, post: Post) => void;
   isAnalyzing: boolean;
@@ -13,6 +14,7 @@ interface FeedbackModalProps {
 export const FeedbackModal: React.FC<FeedbackModalProps> = ({ 
   isOpen, 
   post, 
+  language,
   onClose, 
   onSubmit, 
   isAnalyzing 
@@ -48,7 +50,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
 
         <div className="p-5">
           <div className="bg-gray-50 p-3 rounded-lg mb-4 text-sm text-gray-600 border border-gray-100">
-            You're giving feedback on: <span className="font-semibold text-gray-800">"{post.title}"</span>
+            You're giving feedback on: <span className="font-semibold text-gray-800">"{post.title[language]}"</span>
           </div>
 
           <form onSubmit={handleSubmit}>

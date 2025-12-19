@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Post, UserProfile, SystemLog } from './types';
 import { INITIAL_USER_PROFILE, MOCK_POSTS } from './constants';
 import { rankPosts } from './services/recommendationEngine';
@@ -6,13 +6,21 @@ import { analyzeFeedback } from './services/geminiService';
 import { PostCard } from './components/PostCard';
 import { FeedbackModal } from './components/FeedbackModal';
 import { Dashboard } from './components/Dashboard';
-import { ArrowDown, Key, Check } from 'lucide-react';
+import { ArrowDown, Key, Check, ChevronLeft, ChevronRight, Globe } from 'lucide-react';
+
+const POSTS_PER_PAGE = 15;
 
 const App: React.FC = () => {
   // --- State ---
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
   const [posts, setPosts] = useState<Post[]>([]);
   const [logs, setLogs] = useState<SystemLog[]>([]);
+  
+  // Localization State
+  const [language, setLanguage] = useState<'en' | 'zh'>('en');
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
   
   // API Key Management (Manual Input)
   const [apiKey, setApiKey] = useState('');
@@ -24,6 +32,14 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // --- Derived State: Tag Pool ---
+  // Create a master list of all unique tags available in the system
+  const allAvailableTags = useMemo(() => {
+    const tags = new Set<string>();
+    MOCK_POSTS.forEach(p => p.tags.forEach(t => tags.add(t)));
+    return Array.from(tags);
+  }, []);
 
   // --- Helper: Add Log ---
   const addLog = (type: SystemLog['type'], title: string, details: any) => {
@@ -42,7 +58,7 @@ const App: React.FC = () => {
     // Initial ranking
     const sorted = rankPosts(MOCK_POSTS, INITIAL_USER_PROFILE);
     setPosts(sorted);
-    addLog('RE_RANK', 'Initial Content Load', { top_posts: sorted.slice(0, 3).map(p => p.title) });
+    addLog('RE_RANK', 'Initial Content Load', { top_posts: sorted.slice(0, 3).map(p => p.title.en) });
     
     // Check local storage for key convenience
     const savedKey = localStorage.getItem('GEMINI_API_KEY');
@@ -52,6 +68,18 @@ const App: React.FC = () => {
       setIsKeySaved(true);
     }
   }, []);
+
+  // --- Pagination Logic ---
+  const totalPages = Math.ceil(posts.length / POSTS_PER_PAGE);
+  const visiblePosts = posts.slice(
+    (currentPage - 1) * POSTS_PER_PAGE,
+    currentPage * POSTS_PER_PAGE
+  );
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   // --- Handlers ---
   const handleSaveKey = () => {
@@ -76,26 +104,60 @@ const App: React.FC = () => {
 
   const handleFeedbackSubmit = async (text: string, post: Post) => {
     setIsAnalyzing(true);
-    addLog('FEEDBACK', 'User provided natural language feedback', { feedback: text, target_post: post.title });
+    const postTitle = post.title[language];
+    addLog('FEEDBACK', 'User provided natural language feedback', { feedback: text, target_post: postTitle });
 
-    // 1. Call LLM (Pass the manually entered API Key)
+    // 1. Call LLM (Pass the Tag Pool!)
+    // We pass the content context in the current language so the user intent matches what they read.
     const analysis = await analyzeFeedback(
       text, 
-      `Title: ${post.title}, Tags: ${post.tags.join(', ')}`,
-      apiKey // <--- PASSING KEY HERE
+      `Title: ${postTitle}, Tags: ${post.tags.join(', ')}`,
+      apiKey,
+      allAvailableTags // Pass the pool
     );
     
-    addLog('LLM_ANALYSIS', 'Gemini parsed intent', analysis);
+    addLog('LLM_ANALYSIS', 'Gemini parsed intent using available tags', analysis);
 
-    // 2. Update Profile
+    // 2. Update Profile Weights
+    const currentInterests = [...userProfile.interests];
+    const currentDislikes = [...userProfile.dislikes];
+
+    analysis.adjustments.forEach(adj => {
+      if (adj.category === 'interest') {
+        // Try to find existing tag
+        const existingIdx = currentInterests.findIndex(i => i.tag === adj.tag);
+        if (existingIdx >= 0) {
+          currentInterests[existingIdx].weight += adj.delta;
+          // Clamp to 0
+          if (currentInterests[existingIdx].weight < 0) currentInterests[existingIdx].weight = 0;
+        } else {
+          // Add new interest
+          if (adj.delta > 0) {
+            currentInterests.push({ tag: adj.tag, weight: adj.delta });
+          }
+        }
+      } else if (adj.category === 'dislike') {
+        // Try to find existing tag
+        const existingIdx = currentDislikes.findIndex(d => d.tag === adj.tag);
+        if (existingIdx >= 0) {
+           currentDislikes[existingIdx].weight += adj.delta;
+        } else {
+           if (adj.delta > 0) {
+             currentDislikes.push({ tag: adj.tag, weight: adj.delta });
+           }
+        }
+      }
+    });
+
     const updatedProfile = {
       ...userProfile,
-      dislikeTags: [...Array.from(new Set([...userProfile.dislikeTags, ...analysis.dislike_tags]))]
+      interests: currentInterests,
+      dislikes: currentDislikes
     };
     
     setUserProfile(updatedProfile);
-    addLog('PROFILE_UPDATE', 'User Profile Adjusted', { 
-      new_dislikes: analysis.dislike_tags,
+    addLog('PROFILE_UPDATE', 'Weights Updated', { 
+      changes: analysis.adjustments.map(a => `${a.tag} (${a.delta > 0 ? '+' : ''}${a.delta})`),
       note: analysis.user_note 
     });
 
@@ -109,11 +171,14 @@ const App: React.FC = () => {
     setTimeout(() => {
       const reRankedPosts = rankPosts(MOCK_POSTS, updatedProfile);
       setPosts(reRankedPosts);
+      // Reset to page 1 to show the best results immediately
+      setCurrentPage(1); 
       setIsRefreshing(false);
-      addLog('RE_RANK', 'Feed Updated based on new profile', { 
+      addLog('RE_RANK', 'Feed Updated & Reset to Page 1', { 
         demoted_count: reRankedPosts.filter(p => p.score! < 0).length,
-        top_recommendation: reRankedPosts[0].title
+        top_recommendation: reRankedPosts[0].title[language]
       });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }, 800);
   };
 
@@ -122,6 +187,7 @@ const App: React.FC = () => {
     setLogs([]);
     const sorted = rankPosts(MOCK_POSTS, INITIAL_USER_PROFILE);
     setPosts(sorted);
+    setCurrentPage(1);
   };
 
   const handleManualRefresh = () => {
@@ -139,11 +205,28 @@ const App: React.FC = () => {
         
         {/* Top Header Mobile */}
         <div className="lg:hidden mb-6 space-y-4">
-          <div>
-            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
-              NeuroFeed
-            </h1>
-            <p className="text-sm text-gray-500">Adaptive AI Recommendation Demo</p>
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
+                NeuroFeed
+              </h1>
+              <p className="text-sm text-gray-500">Adaptive AI Recommendation</p>
+            </div>
+            {/* Language Toggle Mobile */}
+            <div className="flex items-center bg-white rounded-lg border p-1">
+               <button 
+                 onClick={() => setLanguage('en')}
+                 className={`px-3 py-1 text-xs rounded-md transition-all ${language === 'en' ? 'bg-black text-white' : 'text-gray-500'}`}
+               >
+                 EN
+               </button>
+               <button 
+                 onClick={() => setLanguage('zh')}
+                 className={`px-3 py-1 text-xs rounded-md transition-all ${language === 'zh' ? 'bg-black text-white' : 'text-gray-500'}`}
+               >
+                 中文
+               </button>
+            </div>
           </div>
           {/* Mobile Key Input */}
           <div className="flex gap-2">
@@ -170,15 +253,35 @@ const App: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
           {/* LEFT: Feed Column */}
-          <div className="lg:col-span-7 xl:col-span-7">
+          <div className="lg:col-span-7 xl:col-span-7 pb-10">
             {/* Header Desktop */}
             <div className="hidden lg:flex items-center justify-between mb-8">
               <div>
                 <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">For You</h1>
                 <p className="text-gray-500">Curated based on your evolving interests</p>
               </div>
+              
               <div className="flex gap-3 items-center">
                 
+                {/* Language Toggle Desktop */}
+                <div className="flex items-center bg-white rounded-full border p-1 shadow-sm mr-2">
+                   <Globe size={14} className="ml-2 text-gray-400" />
+                   <div className="flex ml-2">
+                      <button 
+                        onClick={() => setLanguage('en')}
+                        className={`px-3 py-1 text-xs rounded-full transition-all ${language === 'en' ? 'bg-black text-white font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                      >
+                        English
+                      </button>
+                      <button 
+                        onClick={() => setLanguage('zh')}
+                        className={`px-3 py-1 text-xs rounded-full transition-all ${language === 'zh' ? 'bg-black text-white font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                      >
+                        中文
+                      </button>
+                   </div>
+                </div>
+
                 {/* Desktop API Key Input Area */}
                 <div className="mr-2">
                   {!isKeySaved ? (
@@ -220,17 +323,43 @@ const App: React.FC = () => {
 
             {/* Feed List */}
             <div className={`space-y-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-              {posts.map((post) => (
+              {visiblePosts.map((post) => (
                 <PostCard 
                   key={post.id} 
                   post={post} 
+                  language={language}
                   onNotInterested={handleNotInterestedClick} 
                 />
               ))}
             </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex justify-center items-center mt-10 gap-4">
+                <button 
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="p-2 rounded-full border bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                
+                <span className="text-sm font-medium text-gray-600">
+                  Page {currentPage} of {totalPages}
+                </span>
+
+                <button 
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="p-2 rounded-full border bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+            )}
             
-            <div className="text-center py-10 text-gray-400 text-sm">
-              You've reached the end of the demo feed.
+            <div className="text-center py-6 text-gray-300 text-xs">
+              Showing {visiblePosts.length} of {posts.length} posts
             </div>
           </div>
 
@@ -249,6 +378,7 @@ const App: React.FC = () => {
       <FeedbackModal 
         isOpen={isModalOpen}
         post={selectedPost}
+        language={language}
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleFeedbackSubmit}
         isAnalyzing={isAnalyzing}

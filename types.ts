@@ -1,7 +1,12 @@
+export interface LocalizedContent {
+  en: string;
+  zh: string;
+}
+
 export interface Post {
   id: string;
-  title: string;
-  content: string;
+  title: LocalizedContent;
+  content: LocalizedContent;
   author: string;
   tags: string[];
   imageUrl: string;
@@ -10,12 +15,17 @@ export interface Post {
   debugReason?: string; // Why it was scored this way
 }
 
+export interface WeightedTag {
+  tag: string;
+  weight: number;
+}
+
 export interface UserProfile {
   id: string;
   name: string;
   bio: string;
-  likeTags: string[];
-  dislikeTags: string[];
+  interests: WeightedTag[]; // Replaces likeTags
+  dislikes: WeightedTag[];  // Replaces dislikeTags
 }
 
 export interface SystemLog {
@@ -26,7 +36,13 @@ export interface SystemLog {
   details: any;
 }
 
+export interface TagAdjustment {
+  tag: string;
+  category: 'interest' | 'dislike';
+  delta: number; // e.g. +5.0 or -2.5
+}
+
 export interface FeedbackAnalysisResult {
-  dislike_tags: string[];
+  adjustments: TagAdjustment[];
   user_note: string;
 }

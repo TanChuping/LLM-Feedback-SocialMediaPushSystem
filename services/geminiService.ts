@@ -4,53 +4,96 @@ import { FeedbackAnalysisResult } from "../types";
 export const analyzeFeedback = async (
   feedbackText: string,
   contentContext: string,
-  providedKey?: string // Allow passing key from UI
+  providedKey: string,
+  availableTags: string[] // NEW: Pass the Tag Pool
 ): Promise<FeedbackAnalysisResult> => {
   
-  // Use the key provided from UI, or fallback to env if available
   const apiKey = providedKey || process.env.API_KEY || '';
   
   if (!apiKey) {
     console.error("API Key missing");
     return {
-      dislike_tags: ["Error: Key Missing"],
+      adjustments: [{ tag: "Error: Key Missing", delta: 0, category: "dislike" }],
       user_note: "Please paste your API Key in the top right input box."
     };
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  // Using Gemini 3 Flash Preview as the recommended fast model
   const modelId = "gemini-3-flash-preview"; 
 
   const schema: Schema = {
     type: Type.OBJECT,
     properties: {
-      dislike_tags: {
+      adjustments: {
         type: Type.ARRAY,
-        items: { type: Type.STRING },
-        description: "A list of precise tags inferred from the feedback that the user dislikes.",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            tag: { type: Type.STRING, description: "The tag name to adjust. MUST exist in the provided 'Available Tags' list unless absolutely necessary." },
+            category: { type: Type.STRING, enum: ["interest", "dislike"], description: "Whether this modifies the Interest list or the Dislike list." },
+            delta: { type: Type.NUMBER, description: "The amount to add or subtract (e.g., 5.0, -3.5). Positive numbers increase the weight." },
+          },
+          required: ["tag", "category", "delta"]
+        },
+        description: "List of tags and how their weights should change.",
       },
       user_note: {
         type: Type.STRING,
-        description: "A brief analysis of the user's psychological profile or intent based on the feedback.",
+        description: "A brief analysis of the user's psychological profile or intent.",
       },
     },
-    required: ["dislike_tags", "user_note"],
+    required: ["adjustments", "user_note"],
   };
 
   const prompt = `
-    You are a recommendation system alignment assistant.
-    The user is browsing a social media feed about education and career growth.
+    You are a recommendation system alignment engine.
     
-    Context: The user clicked 'Not Interested' on a post with these details: "${contentContext}".
+    Context:
+    User clicked 'Not Interested' on a post.
+    Post Details: "${contentContext}"
     User Feedback: "${feedbackText}"
     
+    *** AVAILABLE TAG POOL (READ ONLY) ***
+    ${availableTags.join(', ')}
+    **************************************
+    
     Task:
-    1. Analyze the feedback to understand *why* the user disliked it.
-    2. Extract new 'dislike_tags'.
-    3. Provide a 'user_note'.
+    Analyze user intent and output tag adjustments.
+    
+    CRITICAL RULES:
+    1. **STRICT TAG MATCHING**: You MUST use tags from the "AVAILABLE TAG POOL" above whenever possible. Only create a new tag if the concept is completely missing from the pool.
+    2. **Skill Gap vs. Dislike**: 
+       - If user says "Too hard" or "I don't understand":
+       - Dislike tags like 'Advanced', 'Hardcore', 'Theory'.
+       - Interest tags like 'Beginner Friendly', 'Guide', 'Tutorial'.
+    3. **Tone Matching**: 
+       - If user dislikes "Rant" or "Negative" content, downrank those tags and uprank "Inspirational" or "Practical".
+       - If user hates "Clickbait", punish that tag.
+    4. **Solution Seeking (CRITICAL)**:
+       - If the user expresses worry but asks for solutions (e.g., "Is there a fix?", "How to solve?", "I'm worried too"), this is a STRONG signal.
+       - You MUST Apply a **LARGE** positive delta (+15.0 or more) to the core Topic tags (e.g., 'Visa', 'H1B', 'Career').
+       - You MUST Apply a positive delta to solution-oriented tags (e.g., 'Guide', 'Strategy', 'Advice').
+       - You SHOULD Apply a dislike delta to 'Anxiety' or 'Rant' if the user seems tired of complaining.
+    
+    Example 1 (User finds it too hard):
+    Input: "I don't understand the math."
+    Output: 
+    [
+      { "tag": "Beginner Friendly", "category": "interest", "delta": 10.0 },
+      { "tag": "Math Heavy", "category": "dislike", "delta": 8.0 },
+      { "tag": "Theory", "category": "dislike", "delta": 5.0 }
+    ]
+    
+    Example 2 (Solution Seeking):
+    Input: "This is scary, do we have other options?" (Context: H1B Rant)
+    Output:
+    [
+       { "tag": "Visa", "category": "interest", "delta": 15.0 },
+       { "tag": "Strategy", "category": "interest", "delta": 10.0 },
+       { "tag": "Anxiety", "category": "dislike", "delta": 8.0 }
+    ]
 
-    Output: JSON
+    Be precise with deltas.
   `;
 
   try {
@@ -71,7 +114,7 @@ export const analyzeFeedback = async (
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
     return {
-      dislike_tags: ["API Error"],
+      adjustments: [],
       user_note: "Failed to analyze. Please check if your API Key is valid."
     };
   }
