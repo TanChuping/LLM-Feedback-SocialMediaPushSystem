@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Post, UserProfile, SystemLog } from './types';
 import { INITIAL_USER_PROFILE, MOCK_POSTS } from './constants';
 import { rankPosts } from './services/recommendationEngine';
@@ -6,22 +6,21 @@ import { analyzeFeedback } from './services/geminiService';
 import { PostCard } from './components/PostCard';
 import { FeedbackModal } from './components/FeedbackModal';
 import { Dashboard } from './components/Dashboard';
-import { ArrowDown, Key, Check, ChevronLeft, ChevronRight, Globe } from 'lucide-react';
+import { ArrowUp, Key, Check, Globe, RefreshCcw, Loader2 } from 'lucide-react';
 
-const POSTS_PER_PAGE = 15;
+const INITIAL_LOAD_COUNT = 10;
+const LOAD_MORE_INCREMENT = 10;
 
 const App: React.FC = () => {
   // --- State ---
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [allRankedPosts, setAllRankedPosts] = useState<Post[]>([]); // All posts ranked
+  const [visibleCount, setVisibleCount] = useState(INITIAL_LOAD_COUNT); // How many are currently shown
   const [logs, setLogs] = useState<SystemLog[]>([]);
   
   // Localization State
   const [language, setLanguage] = useState<'en' | 'zh'>('en');
 
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  
   // API Key Management (Manual Input)
   const [apiKey, setApiKey] = useState('');
   const [tempKeyInput, setTempKeyInput] = useState('');
@@ -33,8 +32,10 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // --- Infinite Scroll Ref ---
+  const observerTarget = useRef<HTMLDivElement>(null);
+
   // --- Derived State: Tag Pool ---
-  // Create a master list of all unique tags available in the system
   const allAvailableTags = useMemo(() => {
     const tags = new Set<string>();
     MOCK_POSTS.forEach(p => p.tags.forEach(t => tags.add(t)));
@@ -57,7 +58,7 @@ const App: React.FC = () => {
   useEffect(() => {
     // Initial ranking
     const sorted = rankPosts(MOCK_POSTS, INITIAL_USER_PROFILE);
-    setPosts(sorted);
+    setAllRankedPosts(sorted);
     addLog('RE_RANK', 'Initial Content Load', { top_posts: sorted.slice(0, 3).map(p => p.title.en) });
     
     // Check local storage for key convenience
@@ -69,17 +70,33 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // --- Pagination Logic ---
-  const totalPages = Math.ceil(posts.length / POSTS_PER_PAGE);
-  const visiblePosts = posts.slice(
-    (currentPage - 1) * POSTS_PER_PAGE,
-    currentPage * POSTS_PER_PAGE
-  );
+  // --- Infinite Scroll Logic ---
+  const handleLoadMore = useCallback(() => {
+    setVisibleCount(prev => Math.min(prev + LOAD_MORE_INCREMENT, allRankedPosts.length));
+  }, [allRankedPosts.length]);
 
-  const handlePageChange = (newPage: number) => {
-    setCurrentPage(newPage);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && !isRefreshing) {
+          handleLoadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
+    }
+
+    return () => {
+      if (observerTarget.current) {
+        observer.unobserve(observerTarget.current);
+      }
+    };
+  }, [handleLoadMore, isRefreshing]);
+
+  const visiblePosts = allRankedPosts.slice(0, visibleCount);
 
   // --- Handlers ---
   const handleSaveKey = () => {
@@ -107,13 +124,12 @@ const App: React.FC = () => {
     const postTitle = post.title[language];
     addLog('FEEDBACK', 'User provided natural language feedback', { feedback: text, target_post: postTitle });
 
-    // 1. Call LLM (Pass the Tag Pool!)
-    // We pass the content context in the current language so the user intent matches what they read.
+    // 1. Call LLM
     const analysis = await analyzeFeedback(
       text, 
       `Title: ${postTitle}, Tags: ${post.tags.join(', ')}`,
       apiKey,
-      allAvailableTags // Pass the pool
+      allAvailableTags 
     );
     
     addLog('LLM_ANALYSIS', 'Gemini parsed intent using available tags', analysis);
@@ -124,20 +140,16 @@ const App: React.FC = () => {
 
     analysis.adjustments.forEach(adj => {
       if (adj.category === 'interest') {
-        // Try to find existing tag
         const existingIdx = currentInterests.findIndex(i => i.tag === adj.tag);
         if (existingIdx >= 0) {
           currentInterests[existingIdx].weight += adj.delta;
-          // Clamp to 0
           if (currentInterests[existingIdx].weight < 0) currentInterests[existingIdx].weight = 0;
         } else {
-          // Add new interest
           if (adj.delta > 0) {
             currentInterests.push({ tag: adj.tag, weight: adj.delta });
           }
         }
       } else if (adj.category === 'dislike') {
-        // Try to find existing tag
         const existingIdx = currentDislikes.findIndex(d => d.tag === adj.tag);
         if (existingIdx >= 0) {
            currentDislikes[existingIdx].weight += adj.delta;
@@ -166,85 +178,82 @@ const App: React.FC = () => {
     setIsModalOpen(false);
     setSelectedPost(null);
 
-    // 4. Trigger Re-rank
-    setIsRefreshing(true);
-    setTimeout(() => {
-      const reRankedPosts = rankPosts(MOCK_POSTS, updatedProfile);
-      setPosts(reRankedPosts);
-      // Reset to page 1 to show the best results immediately
-      setCurrentPage(1); 
-      setIsRefreshing(false);
-      addLog('RE_RANK', 'Feed Updated & Reset to Page 1', { 
-        demoted_count: reRankedPosts.filter(p => p.score! < 0).length,
-        top_recommendation: reRankedPosts[0].title[language]
-      });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 800);
+    // 4. Trigger Re-rank & Reset View
+    handleManualRefresh(updatedProfile);
   };
 
   const handleReset = () => {
     setUserProfile(INITIAL_USER_PROFILE);
     setLogs([]);
     const sorted = rankPosts(MOCK_POSTS, INITIAL_USER_PROFILE);
-    setPosts(sorted);
-    setCurrentPage(1);
+    setAllRankedPosts(sorted);
+    setVisibleCount(INITIAL_LOAD_COUNT);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleManualRefresh = () => {
+  const handleManualRefresh = (profileOverride?: UserProfile) => {
     setIsRefreshing(true);
+    // Simulate network delay and calculation
     setTimeout(() => {
-       const sorted = rankPosts(posts, userProfile);
-       setPosts([...sorted]); 
+       const profileToUse = profileOverride || userProfile;
+       const sorted = rankPosts(MOCK_POSTS, profileToUse);
+       setAllRankedPosts([...sorted]); 
+       setVisibleCount(INITIAL_LOAD_COUNT); // Reset to top
        setIsRefreshing(false);
-    }, 600);
+       addLog('RE_RANK', 'Feed Refreshed', { 
+        top_recommendation: sorted[0].title[language]
+      });
+       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 800);
   };
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] text-gray-900">
-      <div className="max-w-7xl mx-auto px-4 md:px-6 py-8">
+    <div className="min-h-screen bg-[#f3f4f6] text-gray-900 font-sans">
+      <div className="max-w-7xl mx-auto px-0 md:px-6 py-0 md:py-8">
         
-        {/* Top Header Mobile */}
-        <div className="lg:hidden mb-6 space-y-4">
-          <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
-                NeuroFeed
-              </h1>
-              <p className="text-sm text-gray-500">Adaptive AI Recommendation</p>
-            </div>
-            {/* Language Toggle Mobile */}
-            <div className="flex items-center bg-white rounded-lg border p-1">
+        {/* --- Mobile Header (Sticky) --- */}
+        <div className="lg:hidden sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b px-4 py-3 shadow-sm transition-all">
+          <div className="flex justify-between items-center mb-2">
+            <h1 onClick={() => handleManualRefresh()} className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600 cursor-pointer select-none">
+              NeuroFeed
+            </h1>
+            <div className="flex gap-2">
+               {/* Lang Toggle */}
                <button 
-                 onClick={() => setLanguage('en')}
-                 className={`px-3 py-1 text-xs rounded-md transition-all ${language === 'en' ? 'bg-black text-white' : 'text-gray-500'}`}
+                 onClick={() => setLanguage(l => l === 'en' ? 'zh' : 'en')}
+                 className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-xs font-bold"
                >
-                 EN
+                 {language === 'en' ? 'ZH' : 'EN'}
                </button>
+               {/* Refresh */}
                <button 
-                 onClick={() => setLanguage('zh')}
-                 className={`px-3 py-1 text-xs rounded-md transition-all ${language === 'zh' ? 'bg-black text-white' : 'text-gray-500'}`}
+                  onClick={() => handleManualRefresh()}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200"
                >
-                 中文
+                 <RefreshCcw size={16} className={isRefreshing ? 'animate-spin' : ''} />
                </button>
             </div>
           </div>
+          
           {/* Mobile Key Input */}
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             {!isKeySaved ? (
               <>
                 <input 
-                  type="text" 
-                  placeholder="Paste API Key here..." 
-                  className="flex-1 border rounded px-2 py-1 text-sm"
+                  type="password" 
+                  placeholder="API Key..." 
+                  className="flex-1 bg-gray-100 border-none rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   value={tempKeyInput}
                   onChange={(e) => setTempKeyInput(e.target.value)}
                 />
-                <button onClick={handleSaveKey} className="bg-blue-600 text-white px-3 py-1 rounded text-sm">Save</button>
+                <button onClick={handleSaveKey} className="bg-black text-white px-3 py-1.5 rounded-lg text-xs font-bold">Save</button>
               </>
             ) : (
-              <div className="flex items-center gap-2 text-green-600 text-sm bg-green-50 px-3 py-1 rounded border border-green-200 w-full">
-                <Check size={14} /> Key Saved
-                <button onClick={handleClearKey} className="ml-auto text-xs text-gray-400 underline">Change</button>
+              <div className="flex-1 flex items-center justify-between bg-green-50 px-3 py-1.5 rounded-lg border border-green-200">
+                <span className="flex items-center gap-1.5 text-xs text-green-700 font-medium">
+                  <Check size={12} /> API Connected
+                </span>
+                <button onClick={handleClearKey} className="text-[10px] text-gray-400 underline">Unlink</button>
               </div>
             )}
           </div>
@@ -252,51 +261,47 @@ const App: React.FC = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
-          {/* LEFT: Feed Column */}
-          <div className="lg:col-span-7 xl:col-span-7 pb-10">
-            {/* Header Desktop */}
-            <div className="hidden lg:flex items-center justify-between mb-8">
+          {/* LEFT: Infinite Feed Column */}
+          <div className="lg:col-span-7 xl:col-span-7 pb-20 md:pb-10">
+            {/* Desktop Header */}
+            <div className="hidden lg:flex items-center justify-between mb-6 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 sticky top-6 z-30">
               <div>
-                <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">For You</h1>
-                <p className="text-gray-500">Curated based on your evolving interests</p>
+                <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Your Feed</h1>
+                <p className="text-xs text-gray-500 mt-0.5">AI-Curated • {allRankedPosts.length} items</p>
               </div>
               
               <div className="flex gap-3 items-center">
-                
-                {/* Language Toggle Desktop */}
-                <div className="flex items-center bg-white rounded-full border p-1 shadow-sm mr-2">
-                   <Globe size={14} className="ml-2 text-gray-400" />
-                   <div className="flex ml-2">
-                      <button 
-                        onClick={() => setLanguage('en')}
-                        className={`px-3 py-1 text-xs rounded-full transition-all ${language === 'en' ? 'bg-black text-white font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-                      >
-                        English
-                      </button>
-                      <button 
-                        onClick={() => setLanguage('zh')}
-                        className={`px-3 py-1 text-xs rounded-full transition-all ${language === 'zh' ? 'bg-black text-white font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-                      >
-                        中文
-                      </button>
-                   </div>
+                {/* Language Toggle */}
+                <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                   <button 
+                     onClick={() => setLanguage('en')}
+                     className={`px-3 py-1 text-xs rounded-md transition-all font-medium ${language === 'en' ? 'bg-white shadow-sm text-black' : 'text-gray-500'}`}
+                   >
+                     EN
+                   </button>
+                   <button 
+                     onClick={() => setLanguage('zh')}
+                     className={`px-3 py-1 text-xs rounded-md transition-all font-medium ${language === 'zh' ? 'bg-white shadow-sm text-black' : 'text-gray-500'}`}
+                   >
+                     中文
+                   </button>
                 </div>
 
-                {/* Desktop API Key Input Area */}
-                <div className="mr-2">
+                {/* Desktop API Key */}
+                <div className="relative">
                   {!isKeySaved ? (
-                    <div className="flex items-center gap-2 bg-white p-1 pl-3 rounded-full border shadow-sm">
+                    <div className="flex items-center gap-2 bg-gray-50 p-1 pl-3 rounded-lg border border-gray-200">
                       <Key size={14} className="text-gray-400" />
                       <input 
-                        type="text" 
-                        placeholder="Paste Gemini API Key..." 
-                        className="w-48 text-sm outline-none text-gray-600"
+                        type="password" 
+                        placeholder="Paste Gemini Key..." 
+                        className="w-40 text-sm bg-transparent outline-none text-gray-600 placeholder-gray-400"
                         value={tempKeyInput}
                         onChange={(e) => setTempKeyInput(e.target.value)}
                       />
                       <button 
                         onClick={handleSaveKey}
-                        className="bg-black text-white px-3 py-1.5 rounded-full text-xs font-medium hover:bg-gray-800"
+                        className="bg-black text-white px-3 py-1 rounded-md text-xs font-bold hover:bg-gray-800"
                       >
                         Save
                       </button>
@@ -304,25 +309,26 @@ const App: React.FC = () => {
                   ) : (
                     <button 
                       onClick={handleClearKey}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full border border-green-200 text-xs font-medium hover:bg-green-100 transition-colors"
+                      className="flex items-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-lg border border-green-200 text-xs font-bold hover:bg-green-100 transition-colors"
                     >
                       <Check size={14} />
-                      API Key Connected
+                      Connected
                     </button>
                   )}
                 </div>
 
                 <button 
-                  onClick={handleManualRefresh}
-                  className="p-2 bg-white rounded-full shadow-sm border hover:bg-gray-50 active:scale-95 transition-all"
+                  onClick={() => handleManualRefresh()}
+                  className="p-2 bg-black text-white rounded-lg shadow-sm hover:bg-gray-800 active:scale-95 transition-all"
+                  title="Refresh Feed"
                 >
-                  <ArrowDown size={20} className={isRefreshing ? 'animate-bounce' : ''} />
+                  <RefreshCcw size={18} className={isRefreshing ? 'animate-spin' : ''} />
                 </button>
               </div>
             </div>
 
-            {/* Feed List */}
-            <div className={`space-y-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+            {/* Content Feed */}
+            <div className={`space-y-4 px-3 md:px-0 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
               {visiblePosts.map((post) => (
                 <PostCard 
                   key={post.id} 
@@ -331,35 +337,26 @@ const App: React.FC = () => {
                   onNotInterested={handleNotInterestedClick} 
                 />
               ))}
-            </div>
-
-            {/* Pagination Controls */}
-            {totalPages > 1 && (
-              <div className="flex justify-center items-center mt-10 gap-4">
-                <button 
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  disabled={currentPage === 1}
-                  className="p-2 rounded-full border bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  <ChevronLeft size={20} />
-                </button>
-                
-                <span className="text-sm font-medium text-gray-600">
-                  Page {currentPage} of {totalPages}
-                </span>
-
-                <button 
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage === totalPages}
-                  className="p-2 rounded-full border bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  <ChevronRight size={20} />
-                </button>
+              
+              {/* Infinite Scroll Sentinel / Loading State */}
+              <div ref={observerTarget} className="py-8 flex justify-center items-center">
+                 {visibleCount < allRankedPosts.length ? (
+                   <div className="flex items-center gap-2 text-gray-400 text-sm">
+                     <Loader2 size={20} className="animate-spin" />
+                     <span>Loading more recommendations...</span>
+                   </div>
+                 ) : (
+                   <div className="text-center text-gray-400 text-xs">
+                     <div className="mb-2">You've reached the end!</div>
+                     <button 
+                      onClick={() => window.scrollTo({top: 0, behavior: 'smooth'})}
+                      className="flex items-center gap-1 mx-auto text-blue-500 hover:text-blue-600"
+                     >
+                       <ArrowUp size={14} /> Back to Top
+                     </button>
+                   </div>
+                 )}
               </div>
-            )}
-            
-            <div className="text-center py-6 text-gray-300 text-xs">
-              Showing {visiblePosts.length} of {posts.length} posts
             </div>
           </div>
 

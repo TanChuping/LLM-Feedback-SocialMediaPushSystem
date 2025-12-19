@@ -8,39 +8,47 @@ export const calculateRelevanceScore = (post: Post, profile: UserProfile): { sco
   let score = 0;
   const reasons: string[] = [];
 
-  // Base score for recency/popularity simulation
-  score += Math.log10(post.likes) * 5; 
+  // --- 1. Popularity Base Score ---
+  // Logarithmic scale prevents viral posts from overpowering personal interests completely.
+  // 10 likes -> +5 pts
+  // 100 likes -> +10 pts
+  // 1000 likes -> +15 pts
+  score += Math.log10(post.likes + 1) * 5; 
 
-  // Check for dislikes (Penalty)
-  // UPDATED: Reduced multiplier from 20 to 12 to prevent "poison pills".
-  // If a user loves "Visa" but hates "Anxiety", a post with both should still have a fighting chance.
+  // --- 2. Dislike Penalty (With Saturation) ---
+  // Logic: Accumulate penalties from all matching tags, but CAP the total penalty.
+  // This prevents a post with 10 minor dislikes from vanishing into the abyss if it has strong redeeming qualities.
+  let totalDislikeWeight = 0;
+  
   post.tags.forEach(postTag => {
     const dislikeMatch = profile.dislikes.find(d => d.tag === postTag);
     if (dislikeMatch) {
-      const penalty = dislikeMatch.weight * 12; 
-      score -= penalty;
-      reasons.push(`❌ Dislike '${postTag}' (-${penalty.toFixed(0)})`);
+      totalDislikeWeight += dislikeMatch.weight;
+      reasons.push(`${postTag} (-${(dislikeMatch.weight * 5).toFixed(0)})`);
     }
   });
 
-  // Check for interests (Reward)
-  // UPDATED: Increased multiplier from 5 to 10.
-  // Strong interests should overpower mild dislikes.
+  // Cap total dislike weight impact. 
+  // Even if a post hits every dislike, we calculate based on a max effective weight summation of roughly 20.
+  const effectiveDislikePenalty = Math.min(totalDislikeWeight * 5, 100); 
+  score -= effectiveDislikePenalty;
+
+  // --- 3. Interest Bonus ---
+  let totalInterestWeight = 0;
   post.tags.forEach(postTag => {
     const interestMatch = profile.interests.find(i => i.tag === postTag);
     if (interestMatch) {
-      const reward = interestMatch.weight * 10; 
-      score += reward;
-      reasons.push(`✅ Interest '${postTag}' (+${reward.toFixed(0)})`);
+      totalInterestWeight += interestMatch.weight;
+      reasons.push(`${postTag} (+${interestMatch.weight.toFixed(0)})`);
     }
   });
 
-  // Add a small random factor to simulate exploration
-  score += Math.random() * 5;
+  // Add interest weight to score
+  score += totalInterestWeight;
 
-  return {
-    score: Math.round(score),
-    reason: reasons.length > 0 ? reasons.join(' | ') : 'neutral content'
+  return { 
+    score: parseFloat(score.toFixed(2)), 
+    reason: reasons.length > 0 ? reasons.slice(0, 3).join(', ') : 'Trending' 
   };
 };
 
