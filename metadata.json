@@ -1,0 +1,5 @@
+{
+  "name": "NeuroFeed - Adaptive Social Recommendation",
+  "description": "A social media feed prototype with an LLM-powered feedback loop. Users provide natural language feedback to refine their content preferences in real-time.",
+  "requestFramePermissions": []
+}
