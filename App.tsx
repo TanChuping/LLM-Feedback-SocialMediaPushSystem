@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Post, UserProfile, SystemLog, WeightedTag } from './types';
 import { INITIAL_USER_PROFILE, MOCK_POSTS, ALL_TAGS } from './constants';
 import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2'; 
-import { ADDITIONAL_POSTS_3 } from './constants3'; 
+import { ADDITIONAL_POSTS_3, PET_AND_ENT_TAGS } from './constants3'; 
 import { rankPosts } from './services/recommendationEngine';
 import { analyzeFeedback } from './services/geminiService';
 import { PostCard } from './components/PostCard';
@@ -15,7 +15,16 @@ const ITEMS_PER_PAGE = 30;
 
 // Merge data sources
 const COMBINED_POSTS = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3];
-const COMBINED_TAGS = [...ALL_TAGS, ...EXTRA_TAGS];
+
+// --- DYNAMIC TAG GENERATION ---
+// 1. Start with the explicitly defined tags from our constants files (Schema)
+const EXPLICIT_TAGS = [...ALL_TAGS, ...EXTRA_TAGS, ...PET_AND_ENT_TAGS];
+
+// 2. Iterate through ALL posts to find any "ad-hoc" tags used in the data but missing from the lists
+const POST_DERIVED_TAGS = COMBINED_POSTS.flatMap(post => post.tags);
+
+// 3. Merge and Deduplicate to create the Master Vocabulary for the LLM
+const MASTER_TAG_POOL = Array.from(new Set([...EXPLICIT_TAGS, ...POST_DERIVED_TAGS]));
 
 const App: React.FC = () => {
   // --- State ---
@@ -48,7 +57,8 @@ const App: React.FC = () => {
   const [highlightMenu, setHighlightMenu] = useState(true); // Controls "..." Button Flash independently
 
   // Derived State
-  const allAvailableTags = COMBINED_TAGS;
+  // Pass the dynamically generated Master List to the analysis engine
+  const allAvailableTags = MASTER_TAG_POOL;
 
   const totalPages = Math.ceil(allRankedPosts.length / ITEMS_PER_PAGE);
   const visiblePosts = useMemo(() => {
@@ -72,6 +82,9 @@ const App: React.FC = () => {
     const sorted = rankPosts(COMBINED_POSTS, INITIAL_USER_PROFILE);
     setAllRankedPosts(sorted);
     addLog('RE_RANK', 'Initial Content Load', { top_posts: sorted.slice(0, 3).map(p => p.title.en) });
+    
+    // Debug log to confirm tags are loaded
+    console.log(`Loaded ${COMBINED_POSTS.length} posts and ${MASTER_TAG_POOL.length} unique tags.`);
     
     const savedKey = localStorage.getItem('GEMINI_API_KEY');
     if (savedKey) {
