@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { UserProfile, SystemLog, WeightedTag } from '../types';
 import { Activity, User, Terminal, RefreshCcw } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 interface DashboardProps {
   userProfile: UserProfile;
   logs: SystemLog[];
   onReset: () => void;
+  className?: string; // Allow overriding the default sticky positioning
 }
 
 // --- Inner Component: Tag Chip with Animation ---
@@ -61,7 +63,7 @@ const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string }> = ({ tagDa
   );
 };
 
-export const Dashboard: React.FC<DashboardProps> = ({ userProfile, logs, onReset }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ userProfile, logs, onReset, className }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll logs to bottom
@@ -72,7 +74,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ userProfile, logs, onReset
   }, [logs]);
 
   return (
-    <div className="sticky top-6 space-y-6">
+    <div className={className || "sticky top-6 space-y-6"}>
       {/* Improved Animation Keyframes */}
       <style>{`
         @keyframes floatUpFade {
@@ -97,13 +99,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ userProfile, logs, onReset
           <Activity className="text-blue-600" />
           System Internals
         </h2>
-        <button 
+        <motion.button 
+          whileHover={{ scale: 1.05, color: '#dc2626' }}
+          whileTap={{ scale: 0.95 }}
           onClick={onReset}
-          className="text-xs flex items-center gap-1 text-gray-500 hover:text-red-600 transition-colors"
+          className="text-xs flex items-center gap-1 text-gray-500 transition-colors p-1"
         >
-          <RefreshCcw size={14} />
+          <motion.div
+            whileHover={{ rotate: 180 }}
+            transition={{ duration: 0.3 }}
+          >
+            <RefreshCcw size={14} />
+          </motion.div>
           Reset Demo
-        </button>
+        </motion.button>
       </div>
 
       {/* User Persona Card */}

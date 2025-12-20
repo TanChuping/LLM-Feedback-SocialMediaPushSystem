@@ -1,6 +1,7 @@
 import React from 'react';
 import { Post } from '../types';
 import { MoreHorizontal, Heart, MessageSquare } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface PostCardProps {
   post: Post;
@@ -22,17 +23,44 @@ export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInteres
           </div>
           <span className="text-sm font-medium text-gray-700">{post.author}</span>
         </div>
-        <button 
+        
+        {/* Animated More Button with Lively Tooltip */}
+        <motion.button 
+          whileHover="hover"
+          whileTap="tap"
           onClick={() => onNotInterested(post)}
-          className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-50 transition-colors group relative"
-          title="Not Interested / Feedback"
+          className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-50 relative group outline-none"
         >
-          <MoreHorizontal size={20} />
-          {/* Tooltip hint */}
-          <span className="absolute right-0 top-6 w-24 bg-black text-white text-xs p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none text-center z-10">
+          <motion.div
+            variants={{
+              hover: { rotate: 90 },
+              tap: { scale: 0.9 }
+            }}
+            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          >
+             <MoreHorizontal size={20} />
+          </motion.div>
+
+          {/* Lively Feedback Tooltip */}
+          <motion.div 
+            variants={{
+              hover: { 
+                opacity: 1, 
+                x: -5,
+                y: 0,
+                scale: 1,
+                display: 'block',
+                transition: { type: 'spring', stiffness: 400, damping: 20 }
+              },
+              tap: { scale: 0.95 }
+            }}
+            initial={{ opacity: 0, x: 10, y: 0, scale: 0.8, display: 'none' }}
+            className="absolute right-8 top-0.5 whitespace-nowrap bg-black text-white text-xs font-medium py-1.5 px-3 rounded-lg pointer-events-none shadow-lg z-10"
+          >
             Feedback
-          </span>
-        </button>
+            <div className="absolute top-1/2 -right-1 w-2 h-2 bg-black transform -translate-y-1/2 rotate-45"></div>
+          </motion.div>
+        </motion.button>
       </div>
 
       <div className="flex gap-4">
@@ -65,14 +93,40 @@ export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInteres
 
       <div className="flex items-center justify-between border-t border-gray-50 pt-3 mt-1">
         <div className="flex gap-6">
-          <button className="flex items-center gap-1.5 text-gray-500 hover:text-red-500 transition-colors text-sm">
-            <Heart size={18} />
+          {/* Animated Like Button */}
+          <motion.button 
+            whileHover="hover" 
+            whileTap="tap"
+            className="flex items-center gap-1.5 text-gray-500 hover:text-red-500 transition-colors text-sm group"
+          >
+            <motion.div
+              variants={{
+                hover: { scale: 1.2, y: -2 },
+                tap: { scale: 0.8 }
+              }}
+              transition={{ type: "spring", stiffness: 400, damping: 10 }}
+            >
+              <Heart size={18} />
+            </motion.div>
             <span>{post.likes}</span>
-          </button>
-          <button className="flex items-center gap-1.5 text-gray-500 hover:text-blue-500 transition-colors text-sm">
-            <MessageSquare size={18} />
+          </motion.button>
+
+          {/* Animated Reply Button */}
+          <motion.button 
+             whileHover="hover" 
+             whileTap="tap"
+             className="flex items-center gap-1.5 text-gray-500 hover:text-blue-500 transition-colors text-sm group"
+          >
+             <motion.div
+               variants={{
+                 hover: { scale: 1.1, rotate: -5, x: 2 },
+                 tap: { scale: 0.9 }
+               }}
+             >
+               <MessageSquare size={18} />
+             </motion.div>
             <span>Reply</span>
-          </button>
+          </motion.button>
         </div>
         {/* Debug score display for demo purposes */}
         <div className="text-xs font-mono text-gray-300" title={post.debugReason}>

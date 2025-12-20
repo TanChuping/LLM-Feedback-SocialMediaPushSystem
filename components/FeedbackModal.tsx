@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Send, Sparkles } from 'lucide-react';
 import { Post } from '../types';
+import { motion } from 'framer-motion';
 
 interface FeedbackModalProps {
   isOpen: boolean;
@@ -21,7 +22,8 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
 }) => {
   const [reason, setReason] = useState('');
 
-  if (!isOpen || !post) return null;
+  // Note: Parent component handles AnimatePresence conditional rendering.
+  if (!post) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,13 +41,34 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
-        <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <motion.div 
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <motion.div 
+        className="bg-white rounded-2xl w-full max-w-md shadow-2xl relative z-10 overflow-hidden"
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        transition={{ type: "spring", duration: 0.5, bounce: 0.3 }}
+      >
+        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-white sticky top-0">
           <h3 className="font-semibold text-gray-900">Why are you not interested?</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <motion.button 
+            whileHover={{ scale: 1.1, rotate: 90 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={onClose} 
+            className="text-gray-400 hover:text-gray-600 p-1"
+          >
             <X size={20} />
-          </button>
+          </motion.button>
         </div>
 
         <div className="p-5">
@@ -55,19 +78,24 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
 
           <form onSubmit={handleSubmit}>
             <div className="flex flex-wrap gap-2 mb-4">
-               {predefinedReasons.map(r => (
-                 <button 
+               {predefinedReasons.map((r, i) => (
+                 <motion.button 
                   key={r} 
                   type="button"
+                  whileHover={{ scale: 1.05, y: -2, borderColor: '#60a5fa', color: '#2563eb' }}
+                  whileTap={{ scale: 0.95 }}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05 }}
                   onClick={() => setReason(r)}
-                  className="text-xs bg-white border border-gray-200 text-gray-600 px-3 py-1.5 rounded-full hover:border-blue-400 hover:text-blue-600 transition-colors"
+                  className="text-xs bg-white border border-gray-200 text-gray-600 px-3 py-1.5 rounded-full transition-colors"
                  >
                    {r}
-                 </button>
+                 </motion.button>
                ))}
             </div>
 
-            <div className="relative">
+            <div className="relative group">
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
@@ -75,28 +103,34 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                 className="w-full p-4 bg-gray-50 rounded-xl border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none transition-all text-sm min-h-[100px] resize-none"
                 autoFocus
               />
-              <div className="absolute bottom-3 right-3 text-xs text-gray-400 pointer-events-none">
+              <div className="absolute bottom-3 right-3 text-xs text-gray-400 pointer-events-none group-focus-within:text-blue-500 transition-colors">
                 <span className="flex items-center gap-1">
-                  <Sparkles size={12} className="text-purple-500" />
+                  <Sparkles size={12} className={reason ? "text-purple-500 animate-pulse" : ""} />
                   AI Powered
                 </span>
               </div>
             </div>
 
             <div className="mt-4 flex justify-end">
-              <button 
+              <motion.button 
                 type="submit" 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 disabled={!reason.trim() || isAnalyzing}
                 className={`
-                  flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium text-white transition-all
+                  flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium text-white transition-all shadow-lg
                   ${!reason.trim() || isAnalyzing 
-                    ? 'bg-gray-300 cursor-not-allowed' 
-                    : 'bg-black hover:bg-gray-800 shadow-lg hover:shadow-xl active:scale-95'}
+                    ? 'bg-gray-300 cursor-not-allowed shadow-none' 
+                    : 'bg-black hover:bg-gray-800 hover:shadow-xl'}
                 `}
               >
                 {isAnalyzing ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <motion.div 
+                      animate={{ rotate: 360 }}
+                      transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                      className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" 
+                    />
                     Analyzing...
                   </>
                 ) : (
@@ -105,11 +139,11 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                     <Send size={16} />
                   </>
                 )}
-              </button>
+              </motion.button>
             </div>
           </form>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 };
