@@ -22,7 +22,6 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
 }) => {
   const [reason, setReason] = useState('');
 
-  // Note: Parent component handles AnimatePresence conditional rendering.
   if (!post) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -41,87 +40,97 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      {/* Backdrop with Blur */}
       <motion.div 
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/40 backdrop-blur-md"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={onClose}
       />
 
-      {/* Modal */}
+      {/* Glass Modal */}
       <motion.div 
-        className="bg-white rounded-2xl w-full max-w-md shadow-2xl relative z-10 overflow-hidden"
-        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        className="
+          relative z-10 w-full max-w-md overflow-hidden
+          rounded-[32px] 
+          bg-white/70 backdrop-blur-2xl backdrop-saturate-150
+          border border-white/50
+          shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15),inset_0_0_0_1px_rgba(255,255,255,0.5)]
+        "
+        initial={{ scale: 0.9, opacity: 0, y: 30 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.9, opacity: 0, y: 20 }}
-        transition={{ type: "spring", duration: 0.5, bounce: 0.3 }}
+        exit={{ scale: 0.9, opacity: 0, y: 30 }}
+        transition={{ type: "spring", duration: 0.6, bounce: 0.2 }}
       >
-        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-white sticky top-0">
-          <h3 className="font-semibold text-gray-900">Why are you not interested?</h3>
+        {/* Header */}
+        <div className="p-5 border-b border-white/30 flex justify-between items-center bg-white/20">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-blue-100/50 rounded-lg text-blue-600">
+               <Sparkles size={16} />
+            </div>
+            <h3 className="font-bold text-gray-800 text-lg">AI Feedback</h3>
+          </div>
           <motion.button 
-            whileHover={{ scale: 1.1, rotate: 90 }}
+            whileHover={{ scale: 1.1, rotate: 90, backgroundColor: 'rgba(0,0,0,0.05)' }}
             whileTap={{ scale: 0.9 }}
             onClick={onClose} 
-            className="text-gray-400 hover:text-gray-600 p-1"
+            className="text-gray-500 p-2 rounded-full transition-colors"
           >
             <X size={20} />
           </motion.button>
         </div>
 
-        <div className="p-5">
-          <div className="bg-gray-50 p-3 rounded-lg mb-4 text-sm text-gray-600 border border-gray-100">
-            You're giving feedback on: <span className="font-semibold text-gray-800">"{post.title[language]}"</span>
+        <div className="p-6 space-y-5">
+          {/* Post Context Info */}
+          <div className="bg-white/40 p-3 rounded-xl text-sm text-gray-600 border border-white/40 shadow-sm">
+            Feedback regarding: <span className="font-bold text-gray-900 block mt-1 truncate">"{post.title[language]}"</span>
           </div>
 
-          <form onSubmit={handleSubmit}>
-            <div className="flex flex-wrap gap-2 mb-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Quick Chips */}
+            <div className="flex flex-wrap gap-2">
                {predefinedReasons.map((r, i) => (
                  <motion.button 
                   key={r} 
                   type="button"
-                  whileHover={{ scale: 1.05, y: -2, borderColor: '#60a5fa', color: '#2563eb' }}
+                  whileHover={{ scale: 1.05, y: -2, backgroundColor: "rgba(255,255,255,0.9)" }}
                   whileTap={{ scale: 0.95 }}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.05 }}
                   onClick={() => setReason(r)}
-                  className="text-xs bg-white border border-gray-200 text-gray-600 px-3 py-1.5 rounded-full transition-colors"
+                  className="text-xs font-medium bg-white/50 border border-white/50 text-gray-600 px-3 py-1.5 rounded-full shadow-sm hover:shadow-md hover:text-blue-600 hover:border-blue-200 transition-all"
                  >
                    {r}
                  </motion.button>
                ))}
             </div>
 
+            {/* Input Area */}
             <div className="relative group">
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Type your reason here..."
-                className="w-full p-4 bg-gray-50 rounded-xl border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none transition-all text-sm min-h-[100px] resize-none"
+                placeholder="Share your thoughts (e.g. 'I like this topic', 'Too noisy', 'Show more like this')..."
+                className="w-full p-4 bg-white/40 rounded-2xl border border-white/50 focus:border-blue-400 focus:bg-white/60 focus:ring-4 focus:ring-blue-100/50 outline-none transition-all text-sm min-h-[120px] resize-none placeholder-gray-500 shadow-inner text-gray-800 font-medium"
                 autoFocus
               />
-              <div className="absolute bottom-3 right-3 text-xs text-gray-400 pointer-events-none group-focus-within:text-blue-500 transition-colors">
-                <span className="flex items-center gap-1">
-                  <Sparkles size={12} className={reason ? "text-purple-500 animate-pulse" : ""} />
-                  AI Powered
-                </span>
-              </div>
             </div>
 
-            <div className="mt-4 flex justify-end">
+            {/* Submit Button */}
+            <div className="flex justify-end pt-2">
               <motion.button 
                 type="submit" 
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 disabled={!reason.trim() || isAnalyzing}
                 className={`
-                  flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium text-white transition-all shadow-lg
+                  flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold shadow-lg transition-all
                   ${!reason.trim() || isAnalyzing 
-                    ? 'bg-gray-300 cursor-not-allowed shadow-none' 
-                    : 'bg-black hover:bg-gray-800 hover:shadow-xl'}
+                    ? 'bg-gray-300/50 text-gray-500 cursor-not-allowed shadow-none border border-white/20' 
+                    : 'bg-black/90 text-white hover:bg-black hover:shadow-xl hover:shadow-blue-900/20 border border-black/10'}
                 `}
               >
                 {isAnalyzing ? (
@@ -131,11 +140,11 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                       transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                       className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" 
                     />
-                    Analyzing...
+                    <span>Analyzing Intent...</span>
                   </>
                 ) : (
                   <>
-                    <span>Submit Feedback</span>
+                    <span>Submit to Algorithm</span>
                     <Send size={16} />
                   </>
                 )}

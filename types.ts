@@ -9,6 +9,7 @@ export interface Post {
   content: LocalizedContent;
   author: string;
   tags: string[];
+  tagWeights?: Record<string, number>; // NEW: Specific weight for tags in this post (e.g., Gaming: 2.0, Social: 0.5)
   imageUrl: string;
   likes: number;
   score?: number; // Calculated recommendation score

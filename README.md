@@ -54,18 +54,16 @@ A deliberate constraint:
 
 ## Ranking Model (Current Version)
 
-The feed is ordered using a **weighted linear scoring model**, chosen for transparency and ease of reasoning.
+The feed is ordered using a **weighted linear scoring model**. To solve the semantic ambiguity of tags (e.g., a "Gaming" tag on a "Party" post), we introduced **Per-Post Tag Weights**.
 
 For each post:
 
 ```
 score(post) = popularity_bias(post)
-            + interest_reward(user, post)
-            − dislike_penalty(user, post)
+            + weighted_interest_reward(user, post)
+            − weighted_dislike_penalty(user, post)
             + exploration_noise
 ```
-
-This formulation is intentionally simple and meant to be inspected rather than optimized.
 
 ---
 
@@ -77,43 +75,39 @@ A small baseline favoring broadly liked content:
 popularity_bias = log10(likes + 1) * k_pop
 ```
 
-* The logarithm smooths extreme head effects
-* Prevents highly popular posts from completely dominating
-* Allows newer or niche content to surface
+* The logarithm smooths extreme head effects.
+* Allows newer or niche content to surface.
 
 ---
 
-### B. Interest Reward
+### B. Weighted Interest Reward
 
-If a post contains tags the user is interested in, it receives a positive reward:
+We calculate relevance by multiplying the user's interest strength by the tag's importance within the specific post:
 
 ```
-interest_reward = Σ ( like_weight[tag] * k_like )
+interest_reward = Σ ( user_interest[tag] * post_tag_relevance * k_like )
 ```
 
-* Tag weights come from the user profile
-* This term is intentionally strong so explicit interests can outweigh raw popularity
+* **user_interest**: How much the user likes the topic (from profile).
+* **post_tag_relevance**: How central the topic is to this specific post (e.g., 2.0 for Core Topic, 0.5 for Vibe).
 
-**Known limitation:**
-Rewards are currently summed linearly. This can give posts with many tags an advantage (tag spamming). Introducing saturation or capped rewards is a natural next step, but is not implemented yet to keep the model minimal.
+This distinction ensures that liking "Social" boosts a Nightclub post (Social: 2.5) much more than a Gaming post that happens to have a chat feature (Social: 0.2).
 
 ---
 
-### C. Dislike Penalty
+### C. Dislike Penalty & Veto Power
 
-If a post contains tags the user dislikes, it receives a penalty:
+Handling dislikes requires nuance. We implemented a **Veto Mechanism** to prevent collateral damage.
 
 ```
-dislike_penalty = Σ ( dislike_weight[tag] * k_dislike )
+impact = user_dislike[tag] * post_tag_relevance
 ```
 
-* `k_dislike` is intentionally larger than `k_like`
-* This reflects a common negativity bias: users react more strongly to disliked content
+1. **Standard Penalty**: If `impact` is low, we simply subtract from the score.
+2. **Hard Veto**: If `impact > VETO_THRESHOLD`, the post receives a massive penalty (effectively removed).
 
-Conflicting tags are resolved linearly:
-
-* liked and disliked attributes may cancel out
-* no hard filtering is applied, to avoid excessive information narrowing
+**Why?**
+If a user hates `Gaming` (User Weight 20), we want to ban *League of Legends* posts (Gaming Relevance 2.5 → Impact 50 → **VETO**), but we should NOT ban a generic party post that briefly mentions a console (Gaming Relevance 0.2 → Impact 4 → **Minor Penalty**).
 
 ---
 
@@ -125,8 +119,7 @@ A small random perturbation:
 exploration_noise = random() * k_rand
 ```
 
-* Used only to break ties between similarly scored items
-* Kept small relative to other terms so it does not destabilize ranking
+* Used only to break ties between similarly scored items.
 
 ---
 
@@ -234,7 +227,6 @@ The intent is to make recommendation behavior understandable rather than impress
 * no offline evaluation or A/B testing
 * scalability and security concerns are not addressed
 
-These omissions are intentional and reflect the exploratory nature of the project.
 
 ---
 

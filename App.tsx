@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Post, UserProfile, SystemLog } from './types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Post, UserProfile, SystemLog, WeightedTag } from './types';
 import { INITIAL_USER_PROFILE, MOCK_POSTS, ALL_TAGS } from './constants';
-import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2'; // Import new data
-import { ADDITIONAL_POSTS_3 } from './constants3'; // Import filled gap data
+import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2'; 
+import { ADDITIONAL_POSTS_3 } from './constants3'; 
 import { rankPosts } from './services/recommendationEngine';
 import { analyzeFeedback } from './services/geminiService';
 import { PostCard } from './components/PostCard';
@@ -13,54 +13,49 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 const ITEMS_PER_PAGE = 30;
 
-// Merge data sources at initialization
+// Merge data sources
 const COMBINED_POSTS = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3];
 const COMBINED_TAGS = [...ALL_TAGS, ...EXTRA_TAGS];
 
 const App: React.FC = () => {
   // --- State ---
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
-  const [allRankedPosts, setAllRankedPosts] = useState<Post[]>([]); // All posts ranked
+  const [allRankedPosts, setAllRankedPosts] = useState<Post[]>([]); 
   const [logs, setLogs] = useState<SystemLog[]>([]);
   
-  // Pagination State
+  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   
-  // Localization State
+  // Localization
   const [language, setLanguage] = useState<'en' | 'zh'>('en');
 
-  // API Key Management (Manual Input)
+  // API Key
   const [apiKey, setApiKey] = useState('');
   const [tempKeyInput, setTempKeyInput] = useState('');
   const [isKeySaved, setIsKeySaved] = useState(false);
   
-  // Interaction State
+  // Interaction
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
-  // Mobile Dashboard State
+  // Mobile Dashboard
   const [isMobileDashboardOpen, setIsMobileDashboardOpen] = useState(false);
   
-  // Onboarding State
-  // showOnboarding: Controls the "Mode" (Dimmed background + Flashing buttons). Remains true until first feedback.
-  const [showOnboarding, setShowOnboarding] = useState(true);
-  // showInstructionModal: Controls the "Card" (Text explanation). Can be dismissed by "Try it now".
-  const [showInstructionModal, setShowInstructionModal] = useState(true);
+  // Onboarding & Tutorials
+  const [showWelcome, setShowWelcome] = useState(true); // Controls Overlay + Welcome Modal + Language Flash
+  const [highlightMenu, setHighlightMenu] = useState(true); // Controls "..." Button Flash independently
 
-  // --- Derived State: Tag Pool ---
-  // Use the merged tag list so the LLM knows about new vocabulary
+  // Derived State
   const allAvailableTags = COMBINED_TAGS;
 
-  // --- Derived State: Pagination ---
   const totalPages = Math.ceil(allRankedPosts.length / ITEMS_PER_PAGE);
   const visiblePosts = useMemo(() => {
     const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
     return allRankedPosts.slice(startIdx, startIdx + ITEMS_PER_PAGE);
   }, [allRankedPosts, currentPage]);
 
-  // --- Helper: Add Log ---
   const addLog = (type: SystemLog['type'], title: string, details: any) => {
     const newLog: SystemLog = {
       id: Date.now().toString(),
@@ -72,14 +67,12 @@ const App: React.FC = () => {
     setLogs(prev => [...prev, newLog]);
   };
 
-  // --- Initialization ---
+  // Initialization
   useEffect(() => {
-    // Initial ranking with COMBINED_POSTS
     const sorted = rankPosts(COMBINED_POSTS, INITIAL_USER_PROFILE);
     setAllRankedPosts(sorted);
     addLog('RE_RANK', 'Initial Content Load', { top_posts: sorted.slice(0, 3).map(p => p.title.en) });
     
-    // Check local storage for key convenience
     const savedKey = localStorage.getItem('GEMINI_API_KEY');
     if (savedKey) {
       setApiKey(savedKey);
@@ -88,7 +81,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // --- Handlers ---
   const handleSaveKey = () => {
     if (tempKeyInput.trim().length > 10) {
       setApiKey(tempKeyInput.trim());
@@ -105,12 +97,15 @@ const App: React.FC = () => {
   };
 
   const handleNotInterestedClick = (post: Post) => {
-    // New Logic: Interaction with the "..." button immediately dismisses the onboarding overlay and instruction card.
-    if (showOnboarding) {
-      setShowOnboarding(false);
-      setShowInstructionModal(false);
+    // If user clicks the menu, we turn off the highlight tutorial
+    if (highlightMenu) {
+      setHighlightMenu(false);
     }
-    
+    // Also close welcome screen if they bypassed it (e.g. via overlay clicks if enabled)
+    if (showWelcome) {
+      setShowWelcome(false);
+    }
+
     setSelectedPost(post);
     setIsModalOpen(true);
   };
@@ -120,7 +115,6 @@ const App: React.FC = () => {
     const postTitle = post.title[language];
     addLog('FEEDBACK', 'User provided natural language feedback', { feedback: text, target_post: postTitle });
 
-    // 1. Call LLM
     const analysis = await analyzeFeedback(
       text, 
       `Title: ${postTitle}, Tags: ${post.tags.join(', ')}`,
@@ -130,12 +124,17 @@ const App: React.FC = () => {
     
     addLog('LLM_ANALYSIS', 'Gemini parsed intent using available tags', analysis);
 
-    // 2. Update Profile Weights
-    const currentInterests = [...userProfile.interests];
-    const currentDislikes = [...userProfile.dislikes];
+    // Deep copy to avoid mutation issues during iteration
+    let currentInterests = [...userProfile.interests];
+    let currentDislikes = [...userProfile.dislikes];
 
+    // --- LOGIC UPDATE: Cross-Category Cleansing ---
+    // If we add to Interest, we MUST remove from Dislike, and vice versa.
+    // This prevents "Score Cancellation" where +20 Interest and -20 Dislike result in 0 change.
+    
     analysis.adjustments.forEach(adj => {
       if (adj.category === 'interest') {
+        // 1. Update Interest List
         const existingIdx = currentInterests.findIndex(i => i.tag === adj.tag);
         if (existingIdx >= 0) {
           currentInterests[existingIdx].weight += adj.delta;
@@ -145,7 +144,13 @@ const App: React.FC = () => {
             currentInterests.push({ tag: adj.tag, weight: adj.delta });
           }
         }
+        
+        // 2. CLEANSE Dislike List (Crucial Step!)
+        // If user now LIKES this, they certainly don't DISLIKE it anymore.
+        currentDislikes = currentDislikes.filter(d => d.tag !== adj.tag);
+
       } else if (adj.category === 'dislike') {
+        // 1. Update Dislike List
         const existingIdx = currentDislikes.findIndex(d => d.tag === adj.tag);
         if (existingIdx >= 0) {
            currentDislikes[existingIdx].weight += adj.delta;
@@ -154,8 +159,16 @@ const App: React.FC = () => {
              currentDislikes.push({ tag: adj.tag, weight: adj.delta });
            }
         }
+
+        // 2. CLEANSE Interest List (Crucial Step!)
+        // If user now DISLIKES this, remove it from interests.
+        currentInterests = currentInterests.filter(i => i.tag !== adj.tag);
       }
     });
+
+    // Clean up zero weights just in case
+    currentInterests = currentInterests.filter(i => i.weight > 0.1);
+    currentDislikes = currentDislikes.filter(d => d.weight > 0.1);
 
     const updatedProfile = {
       ...userProfile,
@@ -164,28 +177,22 @@ const App: React.FC = () => {
     };
     
     setUserProfile(updatedProfile);
-    addLog('PROFILE_UPDATE', 'Weights Updated', { 
+    addLog('PROFILE_UPDATE', 'Weights Updated (Cross-Cleansed)', { 
       changes: analysis.adjustments.map(a => `${a.tag} (${a.delta > 0 ? '+' : ''}${a.delta})`),
       note: analysis.user_note 
     });
 
-    // 3. Close Modal & Stop Loading
     setIsAnalyzing(false);
     setIsModalOpen(false);
     setSelectedPost(null);
-
-    // 4. Trigger Re-rank & Reset View & End Onboarding (Just in case)
-    setShowOnboarding(false); 
-    setShowInstructionModal(false); 
     handleManualRefresh(updatedProfile);
   };
 
   const handleReset = () => {
     setUserProfile(INITIAL_USER_PROFILE);
     setLogs([]);
-    setShowOnboarding(true); // Reset onboarding mode
-    setShowInstructionModal(true); // Reset instruction modal
-    // Reset to COMBINED_POSTS
+    setShowWelcome(true);
+    setHighlightMenu(true);
     const sorted = rankPosts(COMBINED_POSTS, INITIAL_USER_PROFILE);
     setAllRankedPosts(sorted);
     setCurrentPage(1);
@@ -194,13 +201,11 @@ const App: React.FC = () => {
 
   const handleManualRefresh = (profileOverride?: UserProfile) => {
     setIsRefreshing(true);
-    // Simulate network delay and calculation
     setTimeout(() => {
        const profileToUse = profileOverride || userProfile;
-       // Rank COMBINED_POSTS
        const sorted = rankPosts(COMBINED_POSTS, profileToUse);
        setAllRankedPosts([...sorted]); 
-       setCurrentPage(1); // Reset to first page on refresh
+       setCurrentPage(1);
        setIsRefreshing(false);
        addLog('RE_RANK', 'Feed Refreshed', { 
         top_recommendation: sorted[0].title[language]
@@ -217,30 +222,29 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#f3f4f6] text-gray-900 font-sans relative">
+    <div className="min-h-screen font-sans relative">
       
-      {/* --- Onboarding Overlay (Dimmer) --- */}
+      {/* Onboarding Overlay (Only for Welcome phase) */}
       <AnimatePresence>
-        {showOnboarding && (
+        {showWelcome && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 z-40 pointer-events-none"
+            className="fixed inset-0 bg-black/60 z-40 pointer-events-none backdrop-blur-[2px]"
           />
         )}
       </AnimatePresence>
       
-      {/* --- Onboarding Instruction Card --- */}
-      {/* Z-Index raised to 100 to appear above flashing buttons (z-50) */}
+      {/* Onboarding Instruction Modal */}
       <AnimatePresence>
-        {showOnboarding && showInstructionModal && (
+        {showWelcome && (
            <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none px-4">
              <motion.div
                initial={{ opacity: 0, scale: 0.9, y: 20 }}
                animate={{ opacity: 1, scale: 1, y: 0 }}
                exit={{ opacity: 0, scale: 0.9, y: 20 }}
-               className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full border-4 border-blue-500/20 text-center pointer-events-auto"
+               className="bg-white/90 backdrop-blur-xl rounded-[32px] shadow-2xl p-6 max-w-sm w-full border border-white/40 text-center pointer-events-auto"
              >
                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
                  <Sparkles size={24} />
@@ -258,8 +262,9 @@ const App: React.FC = () => {
                  whileHover={{ scale: 1.05 }}
                  whileTap={{ scale: 0.95 }}
                  onClick={() => {
-                   setShowInstructionModal(false);
-                   setShowOnboarding(false); // Also dismiss the dimmed background
+                   setShowWelcome(false);
+                   // Note: We DO NOT set highlightMenu(false) here. 
+                   // The menu dots will continue to flash until clicked.
                  }}
                  className="text-xs text-blue-500 font-medium bg-blue-50 py-2 px-4 rounded-full inline-block cursor-pointer hover:bg-blue-100 transition-colors"
                >
@@ -272,53 +277,45 @@ const App: React.FC = () => {
 
       <div className="max-w-7xl mx-auto px-0 md:px-6 py-0 md:py-8">
         
-        {/* --- Mobile/Tablet Header (Sticky) --- */}
-        {/* Shows on screens smaller than lg (1024px) */}
-        <div className="lg:hidden sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b shadow-sm transition-all">
+        {/* Mobile Header */}
+        <div className="lg:hidden sticky top-3 z-50 mx-3 mb-6 rounded-[32px] bg-white/90 backdrop-blur-3xl backdrop-saturate-150 border border-white/40 shadow-xl transition-all">
           <div className="px-4 py-3">
             <div className="flex justify-between items-center mb-2">
               <motion.h1 
                 whileTap={{ scale: 0.95 }}
                 onClick={() => handleManualRefresh()} 
-                className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600 cursor-pointer select-none"
+                className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-purple-700 cursor-pointer select-none drop-shadow-sm pl-1"
               >
                 NeuroFeed
               </motion.h1>
               <div className="flex gap-2">
-                 {/* Lang Toggle - Highlighted in Onboarding */}
                  <motion.button 
                    whileHover={{ scale: 1.05 }}
                    whileTap={{ scale: 0.95 }}
                    onClick={() => setLanguage(l => l === 'en' ? 'zh' : 'en')}
-                   className={`w-8 h-8 flex items-center justify-center rounded-full text-xs font-bold shadow-sm transition-all
-                     ${showOnboarding ? 'z-50 relative bg-white ring-4 ring-blue-400/50 text-blue-600' : 'bg-gray-100 text-gray-600'}`}
-                   animate={showOnboarding ? { 
-                     boxShadow: ["0 0 0 0px rgba(96, 165, 250, 0)", "0 0 0 6px rgba(96, 165, 250, 0.5)", "0 0 0 12px rgba(96, 165, 250, 0)"],
-                     transition: { repeat: Infinity, duration: 1.5 }
-                   } : {}}
+                   className={`w-9 h-9 flex items-center justify-center rounded-full text-xs font-bold shadow-sm transition-all
+                     ${showWelcome ? 'z-50 relative bg-white/80 ring-4 ring-blue-400/50 text-blue-600' : 'bg-white/50 text-gray-700'}`}
                  >
                    {language === 'en' ? 'ZH' : 'EN'}
                  </motion.button>
-                 {/* Refresh */}
                  <motion.button 
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={() => handleManualRefresh()}
-                    className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 shadow-sm"
+                    className="w-9 h-9 flex items-center justify-center rounded-full bg-white/50 text-gray-700 hover:bg-white/80 shadow-sm"
                  >
                    <motion.div
                      animate={{ rotate: isRefreshing ? 360 : 0 }}
                      transition={{ duration: 1, ease: "linear", repeat: isRefreshing ? Infinity : 0 }}
                    >
-                      <RefreshCcw size={16} />
+                      <RefreshCcw size={18} />
                    </motion.div>
                  </motion.button>
 
-                 {/* Mobile Dashboard Toggle */}
                  <motion.button 
                     whileTap={{ scale: 0.9 }}
                     onClick={() => setIsMobileDashboardOpen(!isMobileDashboardOpen)}
-                    className={`w-8 h-8 flex items-center justify-center rounded-full shadow-sm transition-colors ${isMobileDashboardOpen ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}
+                    className={`w-9 h-9 flex items-center justify-center rounded-full shadow-sm transition-colors ${isMobileDashboardOpen ? 'bg-black/80 text-white' : 'bg-white/50 text-gray-800'}`}
                  >
                     <AnimatePresence mode='wait'>
                       {isMobileDashboardOpen ? (
@@ -329,7 +326,7 @@ const App: React.FC = () => {
                           exit={{ rotate: 90, opacity: 0 }}
                           transition={{ duration: 0.2 }}
                         >
-                          <X size={18} />
+                          <X size={20} />
                         </motion.div>
                       ) : (
                         <motion.div 
@@ -339,7 +336,7 @@ const App: React.FC = () => {
                           exit={{ rotate: -90, opacity: 0 }}
                           transition={{ duration: 0.2 }}
                         >
-                          <Menu size={18} />
+                          <Menu size={20} />
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -347,34 +344,33 @@ const App: React.FC = () => {
               </div>
             </div>
             
-            {/* Mobile Key Input */}
             <div className="flex gap-2 items-center">
               {!isKeySaved ? (
                 <>
                   <input 
                     type="password" 
                     placeholder="API Key..." 
-                    className="flex-1 bg-gray-100 border-none rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="flex-1 bg-white/50 border-none rounded-2xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none placeholder-gray-500"
                     value={tempKeyInput}
                     onChange={(e) => setTempKeyInput(e.target.value)}
                   />
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={handleSaveKey} 
-                    className="bg-black text-white px-3 py-1.5 rounded-lg text-xs font-bold"
+                    className="bg-black/80 text-white px-4 py-2 rounded-2xl text-xs font-bold shadow-md"
                   >
                     Save
                   </motion.button>
                 </>
               ) : (
-                <div className="flex-1 flex items-center justify-between bg-green-50 px-3 py-1.5 rounded-lg border border-green-200">
-                  <span className="flex items-center gap-1.5 text-xs text-green-700 font-medium">
+                <div className="flex-1 flex items-center justify-between bg-green-50/50 px-4 py-2 rounded-2xl border border-green-200/50">
+                  <span className="flex items-center gap-1.5 text-xs text-green-800 font-medium">
                     <Check size={12} /> API Connected
                   </span>
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={handleClearKey} 
-                    className="text-[10px] text-gray-400 underline"
+                    className="text-[10px] text-gray-500 underline"
                   >
                     Unlink
                   </motion.button>
@@ -383,22 +379,22 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Mobile Dashboard Dropdown (Drawer) */}
+          {/* Absolute Overlay Dashboard */}
           <AnimatePresence>
             {isMobileDashboardOpen && (
               <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="overflow-hidden bg-gray-50 border-t border-gray-200 shadow-inner"
+                initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                className="absolute top-[calc(100%+8px)] left-0 right-0 z-50 overflow-hidden bg-white/90 backdrop-blur-3xl backdrop-saturate-150 border border-white/40 shadow-2xl rounded-[32px]"
               >
-                <div className="p-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                <div className="p-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
                   <Dashboard 
                      userProfile={userProfile} 
                      logs={logs} 
                      onReset={handleReset}
-                     className="space-y-6" // Override sticky behavior for mobile
+                     className="space-y-6"
                   />
                 </div>
               </motion.div>
@@ -408,45 +404,42 @@ const App: React.FC = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
-          {/* LEFT: Feed Column (Span 7 on desktop, full width on mobile) */}
-          <div className="lg:col-span-7 xl:col-span-7 pb-20 md:pb-10">
-            {/* Desktop Header (Only visible on lg+) */}
-            <div className={`hidden lg:flex items-center justify-between mb-6 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 sticky top-6 ${showOnboarding ? 'z-50 relative' : 'z-30'}`}>
+          {/* Feed Column */}
+          <div className="lg:col-span-7 xl:col-span-7 pb-20 md:pb-10 pt-2 px-1">
+            <div className={`hidden lg:flex items-center justify-between mb-6 bg-white/60 backdrop-blur-xl p-4 rounded-[24px] shadow-sm border border-white/40 sticky top-6 ${showWelcome ? 'z-50 relative' : 'z-30'}`}>
               <div>
-                <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Your Feed</h1>
-                <p className="text-xs text-gray-500 mt-0.5">AI-Curated • Page {currentPage} of {totalPages}</p>
+                <h1 className="text-2xl font-extrabold tracking-tight text-gray-900 drop-shadow-sm">Your Feed</h1>
+                <p className="text-xs text-gray-600 mt-0.5">AI-Curated • Page {currentPage} of {totalPages}</p>
               </div>
               
               <div className="flex gap-3 items-center">
-                {/* Language Toggle - Highlighted in Onboarding */}
-                <div className={`flex items-center rounded-lg p-1 transition-all ${showOnboarding ? 'bg-white ring-4 ring-blue-400/50' : 'bg-gray-100'}`}
-                   style={showOnboarding ? { animation: 'pulse 2s infinite' } : {}}
+                <div className={`flex items-center rounded-lg p-1 transition-all ${showWelcome ? 'bg-white ring-4 ring-blue-400/50' : 'bg-white/40'}`}
+                   style={showWelcome ? { animation: 'pulse 2s infinite' } : {}}
                 >
                    <motion.button 
                      whileTap={{ scale: 0.95 }}
                      onClick={() => setLanguage('en')}
-                     className={`px-3 py-1 text-xs rounded-md transition-all font-medium ${language === 'en' ? 'bg-white shadow-sm text-black' : 'text-gray-500'}`}
+                     className={`px-3 py-1 text-xs rounded-md transition-all font-medium ${language === 'en' ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
                    >
                      EN
                    </motion.button>
                    <motion.button 
                      whileTap={{ scale: 0.95 }}
                      onClick={() => setLanguage('zh')}
-                     className={`px-3 py-1 text-xs rounded-md transition-all font-medium ${language === 'zh' ? 'bg-white shadow-sm text-black' : 'text-gray-500'}`}
+                     className={`px-3 py-1 text-xs rounded-md transition-all font-medium ${language === 'zh' ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
                    >
                      中文
                    </motion.button>
                 </div>
 
-                {/* Desktop API Key */}
                 <div className="relative">
                   {!isKeySaved ? (
-                    <div className="flex items-center gap-2 bg-gray-50 p-1 pl-3 rounded-lg border border-gray-200">
-                      <Key size={14} className="text-gray-400" />
+                    <div className="flex items-center gap-2 bg-white/50 p-1 pl-3 rounded-lg border border-white/30">
+                      <Key size={14} className="text-gray-500" />
                       <input 
                         type="password" 
                         placeholder="Paste Gemini Key..." 
-                        className="w-40 text-sm bg-transparent outline-none text-gray-600 placeholder-gray-400"
+                        className="w-40 text-sm bg-transparent outline-none text-gray-700 placeholder-gray-500"
                         value={tempKeyInput}
                         onChange={(e) => setTempKeyInput(e.target.value)}
                       />
@@ -454,7 +447,7 @@ const App: React.FC = () => {
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
                         onClick={handleSaveKey}
-                        className="bg-black text-white px-3 py-1 rounded-md text-xs font-bold hover:bg-gray-800"
+                        className="bg-black/90 text-white px-3 py-1 rounded-md text-xs font-bold hover:bg-black"
                       >
                         Save
                       </motion.button>
@@ -464,7 +457,7 @@ const App: React.FC = () => {
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={handleClearKey}
-                      className="flex items-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-lg border border-green-200 text-xs font-bold hover:bg-green-100 transition-colors"
+                      className="flex items-center gap-2 px-3 py-2 bg-green-50/70 backdrop-blur-md text-green-800 rounded-lg border border-green-200/50 text-xs font-bold hover:bg-green-100/80 transition-colors"
                     >
                       <Check size={14} />
                       Connected
@@ -476,7 +469,7 @@ const App: React.FC = () => {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => handleManualRefresh()}
-                  className="p-2 bg-black text-white rounded-lg shadow-sm hover:bg-gray-800 transition-all"
+                  className="p-2 bg-black/90 text-white rounded-lg shadow-sm hover:bg-gray-800 transition-all"
                   title="Refresh Feed"
                 >
                   <motion.div
@@ -489,49 +482,46 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Content Feed with Animation */}
             <div className={`px-3 md:px-0 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
               <AnimatePresence mode="popLayout">
                 {visiblePosts.map((post) => (
                   <motion.div
                     key={post.id}
-                    layout={!showOnboarding ? "position" : undefined} // Disable layout animation during onboarding to avoid stacking context issues
-                    initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                    layout="position"
+                    initial={{ opacity: 0, y: 50, scale: 0.9 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-                    transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                    exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+                    transition={{ type: "spring", stiffness: 200, damping: 25, mass: 0.8 }}
                   >
                     <PostCard 
                       post={post} 
                       language={language}
                       onNotInterested={handleNotInterestedClick}
-                      isOnboarding={showOnboarding}
+                      isOnboarding={highlightMenu} // Pass highlight state to PostCard
                     />
                   </motion.div>
                 ))}
               </AnimatePresence>
               
               {visiblePosts.length === 0 && (
-                 <div className="text-center py-20 text-gray-400">
+                 <div className="text-center py-20 text-white/70 font-medium">
                    No posts match your criteria. Try resetting.
                  </div>
               )}
               
-              {/* Pagination Controls */}
               <div className="py-8 flex flex-col items-center justify-center gap-4">
-                 <div className="flex items-center gap-4 bg-white p-2 rounded-xl shadow-sm border border-gray-100">
+                 <div className="flex items-center gap-4 bg-white/60 backdrop-blur-xl p-2 rounded-xl shadow-lg border border-white/40">
                     <motion.button 
                       whileHover={{ scale: 1.1, x: -2 }}
                       whileTap={{ scale: 0.9 }}
                       onClick={() => handlePageChange(currentPage - 1)}
                       disabled={currentPage === 1}
-                      className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      title="Previous Page"
+                      className="p-2 rounded-lg hover:bg-white/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
                       <ArrowLeft size={20} />
                     </motion.button>
                     
-                    <span className="text-sm font-medium text-gray-600 px-2 min-w-[100px] text-center">
+                    <span className="text-sm font-medium text-gray-800 px-2 min-w-[100px] text-center">
                       Page {currentPage} of {totalPages}
                     </span>
 
@@ -540,8 +530,7 @@ const App: React.FC = () => {
                       whileTap={{ scale: 0.9 }}
                       onClick={() => handlePageChange(currentPage + 1)}
                       disabled={currentPage === totalPages}
-                      className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      title="Next Page"
+                      className="p-2 rounded-lg hover:bg-white/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
                       <ArrowRight size={20} />
                     </motion.button>
@@ -552,7 +541,7 @@ const App: React.FC = () => {
                     whileHover={{ scale: 1.05, y: -2 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={() => window.scrollTo({top: 0, behavior: 'smooth'})}
-                    className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-600"
+                    className="flex items-center gap-1 text-xs text-white/80 hover:text-white font-medium drop-shadow-md"
                    >
                      <ArrowUp size={12} /> Back to Top
                    </motion.button>
@@ -561,7 +550,7 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* RIGHT: Dashboard Column (Hidden on mobile/tablet portrait, Visible on Desktop lg+) */}
+          {/* Dashboard Column */}
           <div className="lg:col-span-5 xl:col-span-5 hidden lg:block h-full">
              <Dashboard 
                userProfile={userProfile} 
