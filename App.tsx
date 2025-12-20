@@ -8,7 +8,7 @@ import { analyzeFeedback } from './services/geminiService';
 import { PostCard } from './components/PostCard';
 import { FeedbackModal } from './components/FeedbackModal';
 import { Dashboard } from './components/Dashboard';
-import { ArrowUp, Key, Check, RefreshCcw, ArrowLeft, ArrowRight, Menu, X } from 'lucide-react';
+import { ArrowUp, Key, Check, RefreshCcw, ArrowLeft, ArrowRight, Menu, X, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const ITEMS_PER_PAGE = 30;
@@ -42,6 +42,12 @@ const App: React.FC = () => {
   
   // Mobile Dashboard State
   const [isMobileDashboardOpen, setIsMobileDashboardOpen] = useState(false);
+  
+  // Onboarding State
+  // showOnboarding: Controls the "Mode" (Dimmed background + Flashing buttons). Remains true until first feedback.
+  const [showOnboarding, setShowOnboarding] = useState(true);
+  // showInstructionModal: Controls the "Card" (Text explanation). Can be dismissed by "Try it now".
+  const [showInstructionModal, setShowInstructionModal] = useState(true);
 
   // --- Derived State: Tag Pool ---
   // Use the merged tag list so the LLM knows about new vocabulary
@@ -99,6 +105,12 @@ const App: React.FC = () => {
   };
 
   const handleNotInterestedClick = (post: Post) => {
+    // New Logic: Interaction with the "..." button immediately dismisses the onboarding overlay and instruction card.
+    if (showOnboarding) {
+      setShowOnboarding(false);
+      setShowInstructionModal(false);
+    }
+    
     setSelectedPost(post);
     setIsModalOpen(true);
   };
@@ -162,13 +174,17 @@ const App: React.FC = () => {
     setIsModalOpen(false);
     setSelectedPost(null);
 
-    // 4. Trigger Re-rank & Reset View
+    // 4. Trigger Re-rank & Reset View & End Onboarding (Just in case)
+    setShowOnboarding(false); 
+    setShowInstructionModal(false); 
     handleManualRefresh(updatedProfile);
   };
 
   const handleReset = () => {
     setUserProfile(INITIAL_USER_PROFILE);
     setLogs([]);
+    setShowOnboarding(true); // Reset onboarding mode
+    setShowInstructionModal(true); // Reset instruction modal
     // Reset to COMBINED_POSTS
     const sorted = rankPosts(COMBINED_POSTS, INITIAL_USER_PROFILE);
     setAllRankedPosts(sorted);
@@ -201,7 +217,59 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#f3f4f6] text-gray-900 font-sans">
+    <div className="min-h-screen bg-[#f3f4f6] text-gray-900 font-sans relative">
+      
+      {/* --- Onboarding Overlay (Dimmer) --- */}
+      <AnimatePresence>
+        {showOnboarding && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 z-40 pointer-events-none"
+          />
+        )}
+      </AnimatePresence>
+      
+      {/* --- Onboarding Instruction Card --- */}
+      {/* Z-Index raised to 100 to appear above flashing buttons (z-50) */}
+      <AnimatePresence>
+        {showOnboarding && showInstructionModal && (
+           <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none px-4">
+             <motion.div
+               initial={{ opacity: 0, scale: 0.9, y: 20 }}
+               animate={{ opacity: 1, scale: 1, y: 0 }}
+               exit={{ opacity: 0, scale: 0.9, y: 20 }}
+               className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full border-4 border-blue-500/20 text-center pointer-events-auto"
+             >
+               <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+                 <Sparkles size={24} />
+               </div>
+               <h3 className="text-lg font-bold text-gray-900 mb-2">
+                 {language === 'en' ? 'Customize Your Feed' : '定制你的推荐流'}
+               </h3>
+               <p className="text-gray-600 text-sm leading-relaxed mb-4">
+                 {language === 'en' 
+                   ? "Click the '...' button on any post to provide natural language feedback. The AI will instantly adjust your feed."
+                   : "点开任意帖子的 '...' 按钮，进行自然语言反馈。AI 会立即调整你的推荐内容。"
+                 }
+               </p>
+               <motion.button 
+                 whileHover={{ scale: 1.05 }}
+                 whileTap={{ scale: 0.95 }}
+                 onClick={() => {
+                   setShowInstructionModal(false);
+                   setShowOnboarding(false); // Also dismiss the dimmed background
+                 }}
+                 className="text-xs text-blue-500 font-medium bg-blue-50 py-2 px-4 rounded-full inline-block cursor-pointer hover:bg-blue-100 transition-colors"
+               >
+                 Try it now / 试一试
+               </motion.button>
+             </motion.div>
+           </div>
+        )}
+      </AnimatePresence>
+
       <div className="max-w-7xl mx-auto px-0 md:px-6 py-0 md:py-8">
         
         {/* --- Mobile/Tablet Header (Sticky) --- */}
@@ -217,12 +285,17 @@ const App: React.FC = () => {
                 NeuroFeed
               </motion.h1>
               <div className="flex gap-2">
-                 {/* Lang Toggle */}
+                 {/* Lang Toggle - Highlighted in Onboarding */}
                  <motion.button 
                    whileHover={{ scale: 1.05 }}
                    whileTap={{ scale: 0.95 }}
                    onClick={() => setLanguage(l => l === 'en' ? 'zh' : 'en')}
-                   className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-xs font-bold shadow-sm"
+                   className={`w-8 h-8 flex items-center justify-center rounded-full text-xs font-bold shadow-sm transition-all
+                     ${showOnboarding ? 'z-50 relative bg-white ring-4 ring-blue-400/50 text-blue-600' : 'bg-gray-100 text-gray-600'}`}
+                   animate={showOnboarding ? { 
+                     boxShadow: ["0 0 0 0px rgba(96, 165, 250, 0)", "0 0 0 6px rgba(96, 165, 250, 0.5)", "0 0 0 12px rgba(96, 165, 250, 0)"],
+                     transition: { repeat: Infinity, duration: 1.5 }
+                   } : {}}
                  >
                    {language === 'en' ? 'ZH' : 'EN'}
                  </motion.button>
@@ -338,15 +411,17 @@ const App: React.FC = () => {
           {/* LEFT: Feed Column (Span 7 on desktop, full width on mobile) */}
           <div className="lg:col-span-7 xl:col-span-7 pb-20 md:pb-10">
             {/* Desktop Header (Only visible on lg+) */}
-            <div className="hidden lg:flex items-center justify-between mb-6 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 sticky top-6 z-30">
+            <div className={`hidden lg:flex items-center justify-between mb-6 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 sticky top-6 ${showOnboarding ? 'z-50 relative' : 'z-30'}`}>
               <div>
                 <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Your Feed</h1>
                 <p className="text-xs text-gray-500 mt-0.5">AI-Curated • Page {currentPage} of {totalPages}</p>
               </div>
               
               <div className="flex gap-3 items-center">
-                {/* Language Toggle */}
-                <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                {/* Language Toggle - Highlighted in Onboarding */}
+                <div className={`flex items-center rounded-lg p-1 transition-all ${showOnboarding ? 'bg-white ring-4 ring-blue-400/50' : 'bg-gray-100'}`}
+                   style={showOnboarding ? { animation: 'pulse 2s infinite' } : {}}
+                >
                    <motion.button 
                      whileTap={{ scale: 0.95 }}
                      onClick={() => setLanguage('en')}
@@ -420,7 +495,7 @@ const App: React.FC = () => {
                 {visiblePosts.map((post) => (
                   <motion.div
                     key={post.id}
-                    layout="position"
+                    layout={!showOnboarding ? "position" : undefined} // Disable layout animation during onboarding to avoid stacking context issues
                     initial={{ opacity: 0, y: 30, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
@@ -429,7 +504,8 @@ const App: React.FC = () => {
                     <PostCard 
                       post={post} 
                       language={language}
-                      onNotInterested={handleNotInterestedClick} 
+                      onNotInterested={handleNotInterestedClick}
+                      isOnboarding={showOnboarding}
                     />
                   </motion.div>
                 ))}

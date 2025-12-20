@@ -7,15 +7,16 @@ interface PostCardProps {
   post: Post;
   language: 'en' | 'zh';
   onNotInterested: (post: Post) => void;
+  isOnboarding?: boolean;
 }
 
-export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInterested }) => {
+export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInterested, isOnboarding }) => {
   // Only show first 5 tags to prevent clutter, but the recommendation engine uses all of them.
   const visibleTags = post.tags.slice(0, 5);
   const remainingTags = post.tags.length - 5;
 
   return (
-    <div className="bg-white rounded-xl p-4 mb-4 shadow-sm border border-gray-100 transition-all hover:shadow-md">
+    <div className={`bg-white rounded-xl p-4 mb-4 shadow-sm border border-gray-100 transition-all hover:shadow-md ${isOnboarding ? '' : ''}`}>
       <div className="flex justify-between items-start mb-3">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-400 to-blue-400 flex items-center justify-center text-white text-xs font-bold">
@@ -29,7 +30,13 @@ export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInteres
           whileHover="hover"
           whileTap="tap"
           onClick={() => onNotInterested(post)}
-          className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-50 relative group outline-none"
+          // Changed: Replaced large ring-4 with a cleaner border-2, and kept text blue during onboarding
+          className={`text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-50 group outline-none ${isOnboarding ? 'z-50 relative bg-white border-2 border-blue-500 text-blue-600' : 'relative'}`}
+          // Changed: Reduced animation spread (boxShadow) to be much tighter (max 6px instead of 12px)
+          animate={isOnboarding ? { 
+            boxShadow: ["0 0 0 0px rgba(59, 130, 246, 0)", "0 0 0 3px rgba(59, 130, 246, 0.3)", "0 0 0 6px rgba(59, 130, 246, 0)"],
+            transition: { repeat: Infinity, duration: 1.5 }
+          } : {}}
         >
           <motion.div
             variants={{
@@ -38,7 +45,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInteres
             }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
           >
-             <MoreHorizontal size={20} />
+             <MoreHorizontal size={20} className={isOnboarding ? "text-blue-600" : ""} />
           </motion.div>
 
           {/* Lively Feedback Tooltip */}

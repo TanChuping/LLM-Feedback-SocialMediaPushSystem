@@ -99,7 +99,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Type your reason here... (e.g. 'I scored 110 on TOEFL, don't show me basic English tips')"
+                placeholder="Type your reason here..."
                 className="w-full p-4 bg-gray-50 rounded-xl border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none transition-all text-sm min-h-[100px] resize-none"
                 autoFocus
               />
