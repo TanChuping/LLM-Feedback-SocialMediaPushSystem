@@ -25,10 +25,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          # cache: 'npm'  <-- 这一行被删除了，解决了找不到锁文件的报错
 
       - name: Install dependencies
-        # 修改这里：使用 npm install 而不是 npm ci
         run: npm install
 
       - name: Build
