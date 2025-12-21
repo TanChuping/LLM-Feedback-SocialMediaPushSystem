@@ -25,7 +25,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # cache: 'npm'  <-- 这一行被删除了，解决了找不到锁文件的报错
+          # 彻底删除了 cache 配置，强制不使用缓存，避免报错
 
       - name: Install dependencies
         run: npm install
