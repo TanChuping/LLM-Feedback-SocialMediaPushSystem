@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
@@ -21,18 +21,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          # CRITICAL FIX: Do NOT enable cache: 'npm'. 
-          # We do not have a package-lock.json committed, so enabling cache causes the build to fail immediately.
+          node-version: '20'
 
       - name: Install dependencies
         run: npm install
 
       - name: Build
         run: npm run build
+
+      - name: Check dist directory
+        run: |
+          if [ ! -d "dist" ]; then
+            echo "Error: dist directory not found after build"
+            exit 1
+          fi
+          ls -la dist
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
