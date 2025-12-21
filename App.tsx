@@ -533,7 +533,7 @@ const App: React.FC = () => {
                 onClick={() => triggerRefreshSequence()} 
                 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 cursor-pointer select-none drop-shadow-sm pl-1 flex items-center gap-2"
               >
-                <img src="/favicon.svg" alt="NeuroFeed" className="w-7 h-7" />
+                <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="NeuroFeed" className="w-7 h-7" />
                 NeuroFeed
               </motion.h1>
               <div className="flex gap-2">
@@ -682,7 +682,7 @@ const App: React.FC = () => {
             <div className={`hidden lg:flex items-center justify-between mb-6 bg-white/60 backdrop-blur-xl p-4 rounded-[24px] shadow-sm border border-white/40 sticky top-6 ${showOnboarding ? 'z-50 relative' : 'z-30'}`}>
               <div>
                 <h1 className="text-2xl font-extrabold tracking-tight text-gray-900 drop-shadow-sm flex items-center gap-2">
-                  <img src="/favicon.svg" alt="NeuroFeed" className="w-8 h-8" />
+                  <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="NeuroFeed" className="w-8 h-8" />
                   Your Feed
                 </h1>
                 <p className="text-xs text-gray-600 mt-0.5">AI-Curated • Page {currentPage} of {totalPages}</p>
