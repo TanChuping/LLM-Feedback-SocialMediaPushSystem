@@ -16,16 +16,36 @@ export default defineConfig(({ mode }) => {
       console.warn('No .env file found, using defaults');
     }
     
+    // 开发模式使用根路径，生产模式使用 GitHub Pages 路径
+    // 注意：GitHub Actions 构建时 mode 是 'production'
+    const isDev = mode === 'development';
+    const base = isDev ? '/' : '/LLM-Feedback-SocialMediaPushSystem/';
+    
+    console.log(`[Vite Config] Mode: ${mode}, Base: ${base}`);
+    
     return {
       // 关键修改：添加 base 配置，对应你的 GitHub 仓库名
-      // 如果你的仓库名改了，请把 /LLM-Feedback-SocialMediaPushSystem/ 换成新的名字，前后斜杠不能少
-      base: '/LLM-Feedback-SocialMediaPushSystem/',
+      // 开发模式使用 '/'，生产模式使用 '/LLM-Feedback-SocialMediaPushSystem/'
+      base: base,
       
       server: {
         port: 3000,
         host: '0.0.0.0',
       },
       plugins: [react()],
+      build: {
+        outDir: 'dist',
+        assetsDir: 'assets',
+        // 确保资源路径正确
+        rollupOptions: {
+          output: {
+            // 确保资源文件名包含 hash，便于缓存
+            assetFileNames: 'assets/[name].[hash].[ext]',
+            chunkFileNames: 'assets/[name].[hash].js',
+            entryFileNames: 'assets/[name].[hash].js',
+          }
+        }
+      },
       define: {
         // 保持原有的环境变量配置，如果不存在则使用空字符串
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || ''),
