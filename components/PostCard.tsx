@@ -46,9 +46,9 @@ export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInteres
             whileHover="hover"
             whileTap="tap"
             onClick={() => onNotInterested(post)}
-            className={`text-gray-500 hover:text-gray-800 p-1.5 rounded-full hover:bg-white/50 group outline-none ${isOnboarding ? 'z-50 relative bg-white/80 border-2 border-blue-500 text-blue-600' : 'relative'}`}
+            className={`text-gray-500 hover:text-gray-800 p-1.5 rounded-full hover:bg-white/50 group outline-none ${isOnboarding ? 'z-[60] relative bg-white/80 border-2 border-blue-500 text-blue-600 shadow-xl' : 'relative'}`}
             animate={isOnboarding ? { 
-              boxShadow: ["0 0 0 0px rgba(59, 130, 246, 0)", "0 0 0 3px rgba(59, 130, 246, 0.3)", "0 0 0 6px rgba(59, 130, 246, 0)"],
+              boxShadow: ["0 0 0 0px rgba(59, 130, 246, 0)", "0 0 0 4px rgba(59, 130, 246, 0.4)", "0 0 0 8px rgba(59, 130, 246, 0)"],
               transition: { repeat: Infinity, duration: 1.5 }
             } : {}}
           >

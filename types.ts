@@ -1,3 +1,4 @@
+
 export interface LocalizedContent {
   en: string;
   zh: string;
@@ -46,4 +47,5 @@ export interface TagAdjustment {
 export interface FeedbackAnalysisResult {
   adjustments: TagAdjustment[];
   user_note: string;
+  explicit_search_query?: string | null; // NEW: Capture explicit user intent (e.g. "Show me jobs")
 }
