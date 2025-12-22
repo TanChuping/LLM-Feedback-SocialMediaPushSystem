@@ -9,6 +9,7 @@ import { analyzeFeedback, rerankFeed, pruneUserProfile } from './services/gemini
 import { PostCard } from './components/PostCard';
 import { FeedbackModal } from './components/FeedbackModal';
 import { Dashboard } from './components/Dashboard';
+import { LiquidGlassBackground } from './components/LiquidGlassBackground';
 import { ArrowUp, Key, Check, RefreshCcw, ArrowLeft, ArrowRight, Menu, X, Sparkles, BrainCircuit, Zap, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -17,8 +18,15 @@ const MAX_TAG_WEIGHT = 40;
 // Increased to 25 to leverage deeper content pool, since Stage 2 is now non-blocking
 const LLM_RERANK_COUNT = 25;
 
-// Merge data sources
-const COMBINED_POSTS = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3, ...ADDITIONAL_POSTS_4];
+// Merge data sources with ID deduplication (keep first occurrence)
+const allPostsRaw = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3, ...ADDITIONAL_POSTS_4];
+const postsById = new Map<string, Post>();
+allPostsRaw.forEach(post => {
+  if (!postsById.has(post.id)) {
+    postsById.set(post.id, post);
+  }
+});
+const COMBINED_POSTS = Array.from(postsById.values());
 
 const EXPLICIT_TAGS = [...ALL_TAGS, ...EXTRA_TAGS, ...PET_AND_ENT_TAGS];
 const POST_DERIVED_TAGS = COMBINED_POSTS.flatMap(post => post.tags);
@@ -65,6 +73,9 @@ const App: React.FC = () => {
   const [showInstructionModal, setShowInstructionModal] = useState(true);
   
   const [highlightMenu, setHighlightMenu] = useState(true);
+
+  // Liquid Glass Effect - 默认关闭
+  const [enableLiquidGlass, setEnableLiquidGlass] = useState(false);
 
   const allAvailableTags = MASTER_TAG_POOL;
 
@@ -403,7 +414,7 @@ const App: React.FC = () => {
     const usedIds = new Set<string>();
     orderedIds.forEach(id => {
       const p = hybridCandidates.find(post => post.id === id);
-      if (p) {
+      if (p && !usedIds.has(p.id)) { // Additional deduplication check
         reorderedTopPosts.push(p);
         usedIds.add(id);
       }
@@ -412,8 +423,18 @@ const App: React.FC = () => {
     hybridCandidates.forEach(p => {
       if (!usedIds.has(p.id)) reorderedTopPosts.push(p);
     });
+    
+    // Final deduplication pass for Stage 2 result (defensive programming)
+    const finalDeduped: Post[] = [];
+    const finalSeenIds = new Set<string>();
+    reorderedTopPosts.forEach(p => {
+      if (!finalSeenIds.has(p.id)) {
+        finalDeduped.push(p);
+        finalSeenIds.add(p.id);
+      }
+    });
 
-    const finalSmartFeed = [...reorderedTopPosts, ...restOfFeed];
+    const finalSmartFeed = [...finalDeduped, ...restOfFeed];
     
     const stage2Duration = Date.now() - stage2StartTime;
     setIsStage2Loading(false); 
@@ -470,6 +491,11 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen font-sans relative">
+      {/* Liquid Glass Background Layer - 全屏 WebGL 渲染层 */}
+      <LiquidGlassBackground 
+        enabled={enableLiquidGlass}
+        backgroundImageUrl="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop"
+      />
       
       {/* Onboarding Overlay - Reduced z-index to allow buttons (z-50/z-60) to pop through if parents permit */}
       <AnimatePresence>
@@ -689,6 +715,21 @@ const App: React.FC = () => {
               </div>
               
               <div className="flex gap-3 items-center">
+                {/* Liquid Glass Toggle */}
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setEnableLiquidGlass(!enableLiquidGlass)}
+                  className={`px-3 py-1.5 text-xs rounded-lg transition-all font-medium flex items-center gap-1.5 ${
+                    enableLiquidGlass 
+                      ? 'bg-blue-600 text-white shadow-md' 
+                      : 'bg-white/40 text-gray-600 hover:bg-white/60'
+                  }`}
+                  title={enableLiquidGlass ? 'Disable Liquid Glass' : 'Enable Liquid Glass'}
+                >
+                  <Sparkles size={14} />
+                  <span className="hidden xl:inline">Glass</span>
+                </motion.button>
+
                 <div className={`flex items-center rounded-lg p-1 transition-all ${showOnboarding ? 'bg-white ring-4 ring-orange-400/50' : 'bg-white/40'}`}
                    style={showOnboarding ? { animation: 'pulse 2s infinite' } : {}}
                 >
@@ -823,6 +864,7 @@ const App: React.FC = () => {
                       language={language}
                       onNotInterested={handleNotInterestedClick}
                       isOnboarding={highlightMenu} // Pass highlight state to PostCard
+                      enableLiquidGlass={enableLiquidGlass} // Enable liquid glass effect
                     />
                   </motion.div>
                 ))}
