@@ -51,6 +51,8 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
   const rendererRef = useRef<LiquidGlassRenderer | null>(null);
 
   useEffect(() => {
+    console.log('[LiquidGlassBackground] useEffect triggered', { enabled, hasCanvas: !!canvasRef.current, backgroundImageUrl });
+    
     if (!enabled || !canvasRef.current) {
       console.log('LiquidGlassBackground: disabled or canvas not ready', { enabled, hasCanvas: !!canvasRef.current });
       return;

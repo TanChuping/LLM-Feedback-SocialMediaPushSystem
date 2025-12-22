@@ -76,6 +76,11 @@ const App: React.FC = () => {
 
   // Liquid Glass Effect - 默认关闭
   const [enableLiquidGlass, setEnableLiquidGlass] = useState(false);
+  
+  // Debug: Log when enableLiquidGlass changes
+  useEffect(() => {
+    console.log('[App] enableLiquidGlass state changed:', enableLiquidGlass);
+  }, [enableLiquidGlass]);
 
   const allAvailableTags = MASTER_TAG_POOL;
 
