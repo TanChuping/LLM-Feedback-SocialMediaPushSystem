@@ -196,11 +196,40 @@ export class LiquidGlassRenderer {
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl');
-    if (!gl) {
-      throw new Error('WebGL not supported');
+    
+    // 尝试获取 WebGL 上下文，支持多种方式
+    let gl: WebGLRenderingContext | null = null;
+    try {
+      gl = canvas.getContext('webgl', { 
+        alpha: true, 
+        antialias: true,
+        preserveDrawingBuffer: false 
+      }) as WebGLRenderingContext;
+    } catch (e) {
+      console.warn('Failed to get webgl context with options:', e);
     }
+    
+    // Fallback: 尝试 experimental-webgl
+    if (!gl) {
+      try {
+        gl = canvas.getContext('experimental-webgl') as WebGLRenderingContext;
+      } catch (e) {
+        console.warn('Failed to get experimental-webgl context:', e);
+      }
+    }
+    
+    if (!gl) {
+      const error = new Error('WebGL not supported in this browser/environment');
+      console.error('[LiquidGlassRenderer]', error);
+      throw error;
+    }
+    
     this.gl = gl;
+    console.log('[LiquidGlassRenderer] WebGL context created successfully', {
+      vendor: gl.getParameter(gl.VENDOR),
+      renderer: gl.getParameter(gl.RENDERER),
+      version: gl.getParameter(gl.VERSION)
+    });
   }
 
   async initialize(backgroundImageUrl?: string): Promise<void> {
@@ -233,9 +262,10 @@ export class LiquidGlassRenderer {
         await this.loadBackgroundTexture(backgroundImageUrl);
         console.log('Background texture loaded successfully');
       } catch (error) {
-        console.error('Failed to load background texture:', error);
-        // 使用默认背景作为后备
+        console.warn('Failed to load background texture (will use default):', error);
+        // 使用默认背景作为后备（不抛出错误，让渲染器继续工作）
         this.setDefaultTexture();
+        console.log('Using default texture as fallback');
       }
     } else {
       // 使用默认背景
@@ -286,34 +316,65 @@ export class LiquidGlassRenderer {
   private async loadBackgroundTexture(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const image = new Image();
-      image.crossOrigin = 'anonymous';
+      
+      // 尝试设置 CORS，但如果失败则继续（某些环境可能不支持）
+      try {
+        image.crossOrigin = 'anonymous';
+      } catch (e) {
+        console.warn('Could not set crossOrigin, trying without CORS:', e);
+      }
+      
+      // 设置超时（10秒）
+      const timeout = setTimeout(() => {
+        console.warn('Image load timeout, using default texture');
+        image.onload = null;
+        image.onerror = null;
+        reject(new Error('Image load timeout'));
+      }, 10000);
+      
       image.onload = () => {
+        clearTimeout(timeout);
         if (!this.backgroundTexture) {
           reject(new Error('Texture was destroyed'));
           return;
         }
         
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.backgroundTexture);
-        this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, true);
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
-        
-        // 设置纹理参数
-        if (this.isPowerOf2(image.width) && this.isPowerOf2(image.height)) {
-          this.gl.generateMipmap(this.gl.TEXTURE_2D);
-        } else {
-          this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
-          this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
-          this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
-          this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+        try {
+          this.gl.bindTexture(this.gl.TEXTURE_2D, this.backgroundTexture);
+          this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, true);
+          this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
+          
+          // 设置纹理参数
+          if (this.isPowerOf2(image.width) && this.isPowerOf2(image.height)) {
+            this.gl.generateMipmap(this.gl.TEXTURE_2D);
+          } else {
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+          }
+          console.log(`Background texture loaded: ${image.width}x${image.height}`);
+          resolve();
+        } catch (error) {
+          console.error('Error uploading texture to GPU:', error);
+          reject(error);
         }
-        console.log(`Background texture loaded: ${image.width}x${image.height}`);
-        resolve();
       };
+      
       image.onerror = (error) => {
-        console.error('Image load error:', error);
-        reject(new Error(`Failed to load image: ${url}`));
+        clearTimeout(timeout);
+        console.error('Image load error (CORS or network issue):', error, 'URL:', url);
+        // 不直接 reject，让调用者决定是否使用默认纹理
+        reject(new Error(`Failed to load image: ${url}. This might be a CORS issue.`));
       };
-      image.src = url;
+      
+      // 开始加载
+      try {
+        image.src = url;
+      } catch (error) {
+        clearTimeout(timeout);
+        reject(new Error(`Invalid image URL: ${url}`));
+      }
     });
   }
 

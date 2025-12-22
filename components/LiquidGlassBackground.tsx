@@ -57,11 +57,26 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
     }
 
     const canvas = canvasRef.current;
+    
+    // 确保 canvas 有正确的尺寸
+    if (canvas.width === 0 || canvas.height === 0) {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    
     console.log('LiquidGlassBackground: Initializing renderer...', {
       canvasWidth: canvas.width,
       canvasHeight: canvas.height,
-      windowSize: { w: window.innerWidth, h: window.innerHeight }
+      windowSize: { w: window.innerWidth, h: window.innerHeight },
+      hasWebGL: !!canvas.getContext('webgl') || !!canvas.getContext('experimental-webgl')
     });
+    
+    // 检查 WebGL 支持
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) {
+      console.warn('LiquidGlassBackground: WebGL not supported, falling back to disabled state');
+      return;
+    }
     
     // 初始化渲染器
     try {
@@ -69,7 +84,7 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
       rendererRef.current = renderer;
       globalRenderer = renderer;
 
-      // 初始化并加载背景
+      // 初始化并加载背景（添加更详细的错误处理）
       renderer
         .initialize(backgroundImageUrl)
         .then(() => {
@@ -77,9 +92,14 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
         })
         .catch((error) => {
           console.error('Failed to initialize liquid glass renderer:', error);
+          // 即使背景加载失败，也继续使用默认纹理
+          console.warn('LiquidGlassBackground: Continuing with default texture');
         });
     } catch (error) {
       console.error('Failed to create renderer:', error);
+      // 清理状态
+      rendererRef.current = null;
+      globalRenderer = null;
     }
 
     // 监听窗口大小变化
@@ -112,8 +132,11 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
         height: '100vh',
         zIndex: enabled ? -1 : -999, // 禁用时隐藏更深
         pointerEvents: 'none', // 不拦截鼠标事件
-        display: 'block', // 始终渲染，通过 opacity 控制可见性
+        display: enabled ? 'block' : 'none', // 禁用时完全不渲染
         opacity: enabled ? 1 : 0, // 额外的可见性控制
+      }}
+      onError={(e) => {
+        console.error('Canvas error:', e);
       }}
     />
   );
