@@ -2,12 +2,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import { UserProfile, SystemLog, WeightedTag } from '../types';
 import { Activity, User, Terminal, RefreshCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useLiquidGlass } from '../hooks/useLiquidGlass';
 
 interface DashboardProps {
   userProfile: UserProfile;
   logs: SystemLog[];
   onReset: () => void;
-  className?: string; 
+  className?: string;
+  enableLiquidGlass?: boolean; // 新增：是否启用液态玻璃效果
 }
 
 const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string }> = ({ tagData, colorClass }) => {

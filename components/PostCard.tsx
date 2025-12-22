@@ -1,34 +1,62 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Post } from '../types';
 import { MoreHorizontal, Heart, MessageSquare } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useLiquidGlass } from '../hooks/useLiquidGlass';
 
 interface PostCardProps {
   post: Post;
   language: 'en' | 'zh';
   onNotInterested: (post: Post) => void;
   isOnboarding?: boolean;
+  enableLiquidGlass?: boolean; // 新增：是否启用液态玻璃效果
 }
 
-export const PostCard: React.FC<PostCardProps> = ({ post, language, onNotInterested, isOnboarding }) => {
+export const PostCard: React.FC<PostCardProps> = ({ 
+  post, 
+  language, 
+  onNotInterested, 
+  isOnboarding,
+  enableLiquidGlass = false 
+}) => {
   const visibleTags = post.tags.slice(0, 5);
   const remainingTags = post.tags.length - 5;
 
+  // 使用液态玻璃 Hook
+  const { elementRef, update } = useLiquidGlass({
+    id: `post-card-${post.id}`,
+    enabled: enableLiquidGlass,
+    updateInterval: 100, // 每 100ms 更新一次位置（用于滚动时）
+  });
+
+  // 初始注册和位置更新
+  useEffect(() => {
+    if (enableLiquidGlass) {
+      console.log(`[PostCard ${post.id}] Enabling liquid glass, updating region...`);
+      // 延迟一帧确保 DOM 已渲染
+      const timer = setTimeout(() => {
+        update();
+      }, 100); // 增加延迟确保 DOM 完全渲染
+      return () => clearTimeout(timer);
+    } else {
+      console.log(`[PostCard ${post.id}] Disabling liquid glass`);
+    }
+  }, [enableLiquidGlass, update, post.id]);
+
   return (
     <div 
+      ref={elementRef as React.RefObject<HTMLDivElement>}
       className={`
         mb-6 p-5 transition-all duration-300 hover:scale-[1.01]
         relative overflow-hidden
         rounded-[32px]
         
-        /* High Performance CSS Glassmorphism */
-        bg-white/60 
-        backdrop-blur-xl 
-        backdrop-saturate-150
-        
-        /* Highlight & Thickness Simulation */
-        border border-white/40 
-        shadow-[0_8px_32px_0_rgba(31,38,135,0.07),inset_0_0_0_1px_rgba(255,255,255,0.4)]
+        /* 液态玻璃模式：完全透明，由 WebGL 层渲染 */
+        ${enableLiquidGlass 
+          ? 'bg-transparent border-none shadow-none' 
+          : `bg-white/60 backdrop-blur-xl backdrop-saturate-150 border border-white/40 shadow-[0_8px_32px_0_rgba(31,38,135,0.07),inset_0_0_0_1px_rgba(255,255,255,0.4)]`
+        }
+        ${enableLiquidGlass ? 'backdrop-blur-none' : ''} /* 禁用 CSS backdrop-blur，使用 WebGL 渲染 */
         
         group
       `}

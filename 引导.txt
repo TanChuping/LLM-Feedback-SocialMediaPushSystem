@@ -1,0 +1,33 @@
+==========================================
+快速启动开发服务器（复制以下命令到终端）
+功能：自动清理残留进程 + 启动 localhost + 实时编译
+==========================================
+
+【方法一：使用清理脚本（推荐，自动在新窗口启动）】
+npm run dev:clean
+说明：清理残留进程 → 启动开发服务器 → 自动打开新窗口显示日志
+
+【方法二：手动清理后启动（在当前窗口）】
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+npm run dev
+说明：清理残留进程 → 启动开发服务器（在当前终端窗口）
+
+【方法三：手动清理+新窗口启动（推荐，可以看到实时日志）】
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'd:\coding\LLM\cursor local\LLM-Feedback-SocialMediaPushSystem'; npm run dev"
+说明：清理残留进程 → 在新窗口启动开发服务器（可以看到编译日志）
+
+==========================================
+访问地址
+==========================================
+http://localhost:3000
+
+==========================================
+如果依赖未安装，先运行：
+==========================================
+npm install
+
+==========================================
+
