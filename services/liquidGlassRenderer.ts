@@ -109,7 +109,14 @@ export class LiquidGlassRenderer {
       vec2 current_p_pixel = v_shapeCoord * u_glassSize;
       vec2 glass_half_size_pixel = u_glassSize / 2.0;
       float dist_for_shape_boundary = sdRoundedBoxSmooth(current_p_pixel, glass_half_size_pixel, actualCornerRadius, u_sminSmoothing);
-      if (dist_for_shape_boundary > 0.001) {
+      
+      // 抗锯齿：使用平滑的 alpha 过渡替代硬性 discard
+      // 边缘抗锯齿宽度（像素）
+      float antialiasWidth = 1.5;
+      float edgeAlpha = 1.0 - smoothstep(-antialiasWidth, antialiasWidth, dist_for_shape_boundary);
+      
+      // 如果完全在边界外，提前退出（性能优化）
+      if (edgeAlpha <= 0.0) {
         discard;
       }
 
@@ -203,7 +210,8 @@ export class LiquidGlassRenderer {
       gl = canvas.getContext('webgl', { 
         alpha: true, 
         antialias: true,
-        preserveDrawingBuffer: false 
+        preserveDrawingBuffer: false,
+        premultipliedAlpha: false // 确保 alpha 混合正确
       }) as WebGLRenderingContext;
     } catch (e) {
       console.warn('Failed to get webgl context with options:', e);
@@ -523,7 +531,7 @@ export class LiquidGlassRenderer {
     this.gl.uniform1f(normalStrengthLoc, region.normalStrength ?? 4);
     this.gl.uniform1f(displacementScaleLoc, 3.6); // Displacement Scale
     this.gl.uniform1f(heightTransitionLoc, 13.0); // Height Transition (px)
-    this.gl.uniform1f(sminSmoothingLoc, 20.0); // SDF Smoothing (k)
+    this.gl.uniform1f(sminSmoothingLoc, 30.0); // SDF Smoothing (k) - 增加以改善圆角平滑度
     this.gl.uniform1f(blurRadiusLoc, region.blurRadius ?? 3);
     this.gl.uniform1f(highlightWidthLoc, region.highlightWidth ?? 1);
 
@@ -532,9 +540,11 @@ export class LiquidGlassRenderer {
     const textureLoc = this.gl.getUniformLocation(this.program, 'u_backgroundTexture');
     this.gl.uniform1i(textureLoc, 0);
 
-    // 启用混合以实现透明效果
+    // 启用混合以实现透明效果（优化抗锯齿）
     this.gl.enable(this.gl.BLEND);
     this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+    // 使用更平滑的混合模式以改善边缘
+    this.gl.blendEquation(this.gl.FUNC_ADD);
 
     this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
 
