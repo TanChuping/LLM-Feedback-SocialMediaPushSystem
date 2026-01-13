@@ -30,6 +30,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Download metadata.json
+        run: |
+          mkdir -p public
+          echo "📥 Downloading metadata.json..."
+          curl -L -o public/metadata.json https://raw.githubusercontent.com/xsalazar/emoji-kitchen-backend/main/app/metadata.json || echo "⚠️ Failed to download metadata.json, will use fallback"
+          if [ -f public/metadata.json ]; then
+            echo "✅ metadata.json downloaded successfully"
+            ls -lh public/metadata.json
+          fi
+
       - name: Build
         run: npm run build
         env:

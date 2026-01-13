@@ -9,27 +9,30 @@ let metadata: any = null;
 async function loadMetadata() {
   if (metadata) return metadata;
   
-  try {
-    // 尝试从 public 目录加载
-    const response = await fetch('/metadata.json');
-    if (response.ok) {
-      metadata = await response.json();
-      return metadata;
-    }
-  } catch (error) {
-    console.warn('[EmojiCombinations] Failed to load metadata.json from /metadata.json, trying /data/metadata.json');
+  // 获取 base URL（Vite 会自动注入，开发环境是 '/'，生产环境是 '/LLM-Feedback-SocialMediaPushSystem/'）
+  const baseUrl = import.meta.env.BASE_URL || '/';
+  const paths = [
+    `${baseUrl}metadata.json`,
+    '/metadata.json', // 回退路径
+    `${baseUrl}data/metadata.json`,
+    '/data/metadata.json' // 回退路径
+  ];
+  
+  for (const path of paths) {
     try {
-      // 尝试从 data 目录加载
-      const response2 = await fetch('/data/metadata.json');
-      if (response2.ok) {
-        metadata = await response2.json();
+      const response = await fetch(path);
+      if (response.ok) {
+        metadata = await response.json();
+        console.log(`[EmojiCombinations] ✅ Loaded metadata.json from ${path}`);
         return metadata;
       }
-    } catch (error2) {
-      console.warn('[EmojiCombinations] Failed to load metadata.json, using fallback');
+    } catch (error) {
+      // 继续尝试下一个路径
+      continue;
     }
   }
   
+  console.warn('[EmojiCombinations] ⚠️ Failed to load metadata.json from all paths, using fallback');
   // 回退：返回空对象
   metadata = {};
   return metadata;
