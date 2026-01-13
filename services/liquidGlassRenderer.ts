@@ -437,9 +437,11 @@ export class LiquidGlassRenderer {
   }
 
   private render(): void {
-    // 更新 canvas 尺寸 - 使用 window 尺寸确保正确
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    // 更新 canvas 尺寸 - 使用 visualViewport 来处理移动设备缩放
+    // 对于 fixed 定位的 canvas，应该使用 visual viewport 的尺寸（CSS 像素）
+    const viewport = window.visualViewport;
+    const width = viewport ? Math.floor(viewport.width) : window.innerWidth;
+    const height = viewport ? Math.floor(viewport.height) : window.innerHeight;
     
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;

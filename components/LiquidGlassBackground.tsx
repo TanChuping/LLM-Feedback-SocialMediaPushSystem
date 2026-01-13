@@ -60,16 +60,22 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
 
     const canvas = canvasRef.current;
     
-    // 确保 canvas 有正确的尺寸
-    if (canvas.width === 0 || canvas.height === 0) {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+    // 使用 visualViewport 来获取正确的视口尺寸（处理移动设备缩放）
+    // 对于 fixed 定位的 canvas，应该使用 visual viewport 的尺寸
+    const viewport = window.visualViewport;
+    const canvasWidth = viewport ? Math.floor(viewport.width) : window.innerWidth;
+    const canvasHeight = viewport ? Math.floor(viewport.height) : window.innerHeight;
+    
+    if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
     }
     
     console.log('LiquidGlassBackground: Initializing renderer...', {
       canvasWidth: canvas.width,
       canvasHeight: canvas.height,
       windowSize: { w: window.innerWidth, h: window.innerHeight },
+      viewportSize: viewport ? { w: viewport.width, h: viewport.height, scale: viewport.scale } : null,
       hasWebGL: !!canvas.getContext('webgl') || !!canvas.getContext('experimental-webgl')
     });
     
@@ -104,15 +110,32 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
       globalRenderer = null;
     }
 
-    // 监听窗口大小变化
+    // 监听窗口大小变化和 visualViewport 变化（处理移动设备缩放）
     const handleResize = () => {
-      // Canvas 尺寸会在 render 循环中自动更新
+      if (!canvas) return;
+      const currentViewport = window.visualViewport;
+      const newWidth = currentViewport ? Math.floor(currentViewport.width) : window.innerWidth;
+      const newHeight = currentViewport ? Math.floor(currentViewport.height) : window.innerHeight;
+      
+      if (canvas.width !== newWidth || canvas.height !== newHeight) {
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        // 渲染器会在 render 循环中自动检测尺寸变化
+      }
     };
+    
     window.addEventListener('resize', handleResize);
+    // 监听 visualViewport 变化以处理移动设备缩放
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize);
+    }
 
     // 清理函数
     return () => {
       window.removeEventListener('resize', handleResize);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleResize);
+      }
       if (rendererRef.current) {
         rendererRef.current.destroy();
         rendererRef.current = null;

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { UserProfile, SystemLog, WeightedTag } from '../types';
 import { Activity, User, Terminal, RefreshCcw } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 
 interface DashboardProps {
@@ -10,6 +10,8 @@ interface DashboardProps {
   onReset: () => void;
   className?: string;
   enableLiquidGlass?: boolean; // 新增：是否启用液态玻璃效果
+  userPersona?: { description: string; emojiFusion: string[] };
+  emojiFusionImage?: string | null;
 }
 
 const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string }> = ({ tagData, colorClass }) => {
@@ -54,8 +56,16 @@ const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string }> = ({ tagDa
   );
 };
 
-export const Dashboard: React.FC<DashboardProps> = ({ userProfile, logs, onReset, className }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ 
+  userProfile, 
+  logs, 
+  onReset, 
+  className,
+  userPersona,
+  emojiFusionImage
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -93,14 +103,120 @@ export const Dashboard: React.FC<DashboardProps> = ({ userProfile, logs, onReset
 
       {/* User Persona Card - Glass Effect */}
       <div className="bg-white/60 backdrop-blur-xl rounded-[24px] shadow-[0_8px_32px_0_rgba(31,38,135,0.07)] border border-white/40 overflow-hidden">
-        <div className="bg-gradient-to-r from-blue-50/50 to-indigo-50/50 p-4 border-b border-white/30 flex items-center gap-3">
-          <div className="bg-blue-100/80 p-2 rounded-full text-blue-600 shadow-sm">
-             <User size={20} />
+        <div className="bg-gradient-to-r from-blue-50/50 to-indigo-50/50 p-4 border-b border-white/30">
+          <div className="flex items-center gap-3">
+            {/* Emoji Fusion 大头像 */}
+            <div className="relative">
+              {emojiFusionImage ? (
+                // 显示融合后的图片
+                <div className="relative">
+                  <motion.img
+                    key={emojiFusionImage} // 使用 key 强制重新渲染
+                    src={emojiFusionImage}
+                    alt="Emoji Fusion"
+                    initial={{ scale: 0, rotate: -180 }}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: "spring", stiffness: 200 }}
+                    className="w-16 h-16 rounded-full object-cover shadow-lg border-2 border-white/50 bg-white/20"
+                    onError={(e) => {
+                      // 如果融合图片加载失败，隐藏并回退到显示原始 emoji
+                      console.error('[Dashboard] Emoji fusion image failed to load:', emojiFusionImage);
+                      e.currentTarget.style.display = 'none';
+                      // 触发父组件更新，清除失败的图片URL
+                      const event = new CustomEvent('emojiFusionError');
+                      window.dispatchEvent(event);
+                    }}
+                    onLoad={() => {
+                      console.log('[Dashboard] ✅ Emoji fusion image loaded successfully');
+                    }}
+                  />
+                  {/* 加载指示器（可选） */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/10 rounded-full">
+                    <div className="w-4 h-4 border-2 border-purple-300 border-t-transparent rounded-full animate-spin opacity-0" />
+                  </div>
+                </div>
+              ) : (
+                // 回退：显示原始 emoji（如果融合失败或未生成）
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-100 to-pink-100 flex items-center justify-center text-3xl shadow-lg border-2 border-white/50">
+                  <div className="flex items-center justify-center gap-0.5">
+                    {(userPersona?.emojiFusion?.slice(0, 2) || ['👤', '🤔']).map((emoji, idx) => (
+                      <motion.span
+                        key={idx}
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ delay: idx * 0.1, type: "spring" }}
+                        className="text-2xl"
+                      >
+                        {emoji}
+                      </motion.span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* 旋转装饰 */}
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                className="absolute -inset-1 border-2 border-dashed border-purple-200/50 rounded-full pointer-events-none"
+              />
+            </div>
+            
+            <div className="flex-1">
+              <h3 className="font-bold text-gray-900">{userProfile.name}</h3>
+              <p className="text-xs text-blue-600 font-medium">Live User Profile Model</p>
+            </div>
+            
+            {/* 展开/折叠按钮 */}
+            {userPersona?.description && (
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setIsDescriptionExpanded(!isDescriptionExpanded)}
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+                title={isDescriptionExpanded ? "Collapse description" : "Expand description"}
+              >
+                <motion.svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  animate={{ rotate: isDescriptionExpanded ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <path
+                    d="M5 7.5L10 12.5L15 7.5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </motion.svg>
+              </motion.button>
+            )}
           </div>
-          <div>
-            <h3 className="font-bold text-gray-900">{userProfile.name}</h3>
-            <p className="text-xs text-blue-600 font-medium">Live User Profile Model</p>
-          </div>
+          
+          {/* 用户画像文字描述（默认折叠） */}
+          {userPersona?.description && (
+            <AnimatePresence>
+              {isDescriptionExpanded && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="mt-3 p-3 bg-white/40 rounded-xl border border-white/40 overflow-hidden"
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="text-lg">📝</span>
+                    <p className="text-xs text-gray-700 leading-relaxed font-medium">
+                      {userPersona.description}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          )}
         </div>
         
         <div className="p-4 space-y-5">

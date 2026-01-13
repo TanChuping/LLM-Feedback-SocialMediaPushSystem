@@ -49,3 +49,9 @@ export interface FeedbackAnalysisResult {
   user_note: string;
   explicit_search_query?: string | null; // NEW: Capture explicit user intent (e.g. "Show me jobs")
 }
+
+export interface UserPersona {
+  description: string;  // 文字描述的用户画像
+  emojiFusion: string[]; // emoji组合数组，固定2个
+  lastUpdated?: number;  // 最后更新时间戳
+}

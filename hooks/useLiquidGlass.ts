@@ -62,23 +62,39 @@ export function useLiquidGlass({
     
     const rect = elementRef.current.getBoundingClientRect();
     
-    // 对于 fixed 定位的 canvas，使用 getBoundingClientRect 返回的视口坐标
-    // 不需要加上 scrollX/scrollY，因为 canvas 是 fixed 定位
-    const x = rect.left;
-    const y = rect.top;
+    // 使用 visualViewport API 来处理移动设备缩放（双指捏合）
+    // 在 viewport zoom 时，getBoundingClientRect 返回的坐标是相对于 layout viewport 的 CSS 像素
+    // 但 canvas 是 fixed 定位，需要转换为相对于 visual viewport 的坐标
+    const viewport = window.visualViewport;
+    
+    let x = rect.left;
+    let y = rect.top;
+    let width = rect.width;
+    let height = rect.height;
+    
+    // 如果存在 visualViewport（移动设备缩放时），需要调整坐标
+    if (viewport && viewport.scale !== 1) {
+      // 对于 fixed 定位的元素，getBoundingClientRect 在 viewport zoom 时
+      // 返回的坐标是相对于 layout viewport 的，但我们需要相对于 visual viewport
+      // visualViewport.offsetLeft/Top 是 visual viewport 相对于 layout viewport 的偏移
+      x = (rect.left - viewport.offsetLeft) / viewport.scale;
+      y = (rect.top - viewport.offsetTop) / viewport.scale;
+      width = rect.width / viewport.scale;
+      height = rect.height / viewport.scale;
+    }
     
     const region = currentRegionRef.current ? {
       ...currentRegionRef.current,
       x,
       y,
-      width: rect.width,
-      height: rect.height,
+      width,
+      height,
     } : {
       id,
       x,
       y,
-      width: rect.width,
-      height: rect.height,
+      width,
+      height,
       cornerRadius: 32,      // 从 demo 调优的参数
       ior: 1.1,              // IOR (Refraction)
       thickness: 30.2,       // Thickness/Strength
@@ -108,6 +124,13 @@ export function useLiquidGlass({
     // 监听滚动和窗口大小变化
     window.addEventListener('scroll', update, { passive: true });
     window.addEventListener('resize', update);
+    
+    // 监听 visualViewport 事件以处理移动设备缩放（双指捏合）
+    // visualViewport 在移动设备缩放时会触发，但触控板缩放不会
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', update);
+      window.visualViewport.addEventListener('scroll', update);
+    }
 
     return () => {
       if (updateTimerRef.current) {
@@ -115,6 +138,10 @@ export function useLiquidGlass({
       }
       window.removeEventListener('scroll', update);
       window.removeEventListener('resize', update);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', update);
+        window.visualViewport.removeEventListener('scroll', update);
+      }
     };
   }, [enabled, updateInterval, update]);
 

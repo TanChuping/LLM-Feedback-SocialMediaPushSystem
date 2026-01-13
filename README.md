@@ -46,7 +46,7 @@ The system runs entirely client-side to demonstrate immediate responsiveness and
     *   It outputs **Tag Adjustments** (Weights +/-) and checks for **Explicit Search Intent** (e.g., "hiking").
 
 4.  **Stage 1.5: Hybrid Retrieval (The "Injection" Layer):**
-    *   **If no search intent:** The system ranks posts purely by Tag Weights (Algo) and picks the Top 25.
+    *   **If no search intent:** The system ranks posts by Tag Weights (Algo), picks Top 20, and ensures Top 3 interest tags have representation in the candidate pool (up to 25 posts total).
     *   **If search intent exists:**
         *   **Pool A:** Top 15 posts based on Interest Profile (Algo).
         *   **Pool B:** Top 10 posts based on a *Deterministic Keyword Search* (Dead Algo).
@@ -59,6 +59,11 @@ The system runs entirely client-side to demonstrate immediate responsiveness and
 6.  **Stage 3: Memory Cleanup (Background):**
     *   A background process periodically asks the LLM to review the User's Feedback History.
     *   It identifies contradictions (e.g., User liked "Gaming" yesterday but hates it today) and decays old tags to keep the profile fresh.
+
+7.  **Stage 4: User Persona & Avatar (Background):**
+    *   Generates a textual user profile description based on feedback history.
+    *   Creates a satirical emoji fusion avatar using Google Emoji Kitchen, reflecting the user's current state (e.g., "dating weeb" → 🤡💔).
+    *   Dynamically generates a mocking nickname (max 3 words) that evolves with user interactions (e.g., "horny programmer", "muscle musician", "Mr.nice guy").
 
 ---
 

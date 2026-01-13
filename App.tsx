@@ -5,7 +5,7 @@ import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2';
 import { ADDITIONAL_POSTS_3, PET_AND_ENT_TAGS } from './constants3'; 
 import { ADDITIONAL_POSTS_4 } from './constants4';
 import { rankPosts, normalizeTag, generateRandomProfile, getHybridFeed } from './services/recommendationEngine';
-import { analyzeFeedback, rerankFeed, pruneUserProfile } from './services/geminiService';
+import { analyzeFeedback, rerankFeed, pruneUserProfile, generateUserPersonaDescription, generateEmojiFusion, generateUserNickname } from './services/geminiService';
 import { PostCard } from './components/PostCard';
 import { FeedbackModal } from './components/FeedbackModal';
 import { Dashboard } from './components/Dashboard';
@@ -43,6 +43,13 @@ const App: React.FC = () => {
   
   // New: Track history for background cleanup context
   const [feedbackHistory, setFeedbackHistory] = useState<string[]>([]);
+  
+  // User Persona (Stage 4)
+  const [userPersona, setUserPersona] = useState<{ description: string; emojiFusion: string[] }>({
+    description: "新用户，等待更多反馈来描绘画像...",
+    emojiFusion: ['👤', '🤔']
+  });
+  const [emojiFusionImage, setEmojiFusionImage] = useState<string | null>(null);
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -82,6 +89,19 @@ const App: React.FC = () => {
     console.log('[App] enableLiquidGlass state changed:', enableLiquidGlass);
   }, [enableLiquidGlass]);
 
+  // Handle emoji fusion image load errors
+  useEffect(() => {
+    const handleEmojiFusionError = () => {
+      console.log('[App] Clearing failed emoji fusion image');
+      setEmojiFusionImage(null);
+    };
+    
+    window.addEventListener('emojiFusionError', handleEmojiFusionError);
+    return () => {
+      window.removeEventListener('emojiFusionError', handleEmojiFusionError);
+    };
+  }, []);
+
   const allAvailableTags = MASTER_TAG_POOL;
 
   const totalPages = Math.ceil(allRankedPosts.length / ITEMS_PER_PAGE);
@@ -91,8 +111,9 @@ const App: React.FC = () => {
   }, [allRankedPosts, currentPage]);
 
   const addLog = (type: SystemLog['type'], title: string, details: any) => {
+    // 使用更精确的时间戳 + 随机数确保唯一性
     const newLog: SystemLog = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       timestamp: new Date().toLocaleTimeString(),
       type,
       title,
@@ -328,6 +349,9 @@ const App: React.FC = () => {
       newHistory,
       analysis.explicit_search_query // Pass the raw search query for Stage 1.5
     );
+    
+    // 4. Trigger User Persona Update (Stage 4) - Background, Non-blocking
+    updateUserPersona(updatedProfile, newHistory);
   };
 
   const handleReset = () => {
@@ -341,6 +365,13 @@ const App: React.FC = () => {
     setShowOnboarding(true);
     setShowInstructionModal(true);
     setHighlightMenu(true);
+    
+    // Reset user persona
+    setUserPersona({
+      description: "新用户，等待更多反馈来描绘画像...",
+      emojiFusion: ['👤', '🤔']
+    });
+    setEmojiFusionImage(null);
     
     // Random shuffle for feed
     const shuffled = [...COMBINED_POSTS].sort(() => 0.5 - Math.random());
@@ -469,6 +500,69 @@ const App: React.FC = () => {
     // TRIGGER STAGE 3 (Forgetting) SECRETLY HERE
     // It runs in background after Stage 2 analysis is done
     triggerBackgroundCleanup(profileToUse, currentHistory || feedbackHistory);
+  };
+
+  // --- STAGE 4: USER PERSONA UPDATE (Background, Non-blocking) ---
+  // 分为三条线：名字、描述和 emoji 融合
+  const updateUserPersona = async (currentProfile: UserProfile, history: string[]) => {
+    try {
+      console.log(`[App] 🎭 Starting Stage 4 update with ${history.length} feedback items`);
+      console.log(`[App] 📝 Latest feedback:`, history[history.length - 1] || 'None');
+      
+      // 线1：生成用户昵称（嘲讽的）
+      const nicknameResult = await generateUserNickname(
+        history,
+        apiKey,
+        currentProfile.name
+      );
+      console.log(`[App] ✅ Nickname generated:`, nicknameResult.nickname);
+      
+      // 更新用户名字
+      if (nicknameResult.nickname && nicknameResult.nickname !== currentProfile.name) {
+        setUserProfile(prev => ({ ...prev, name: nicknameResult.nickname }));
+      }
+      
+      // 线2：生成用户画像描述（只基于反馈，不涉及标签和emoji）
+      const descriptionResult = await generateUserPersonaDescription(
+        history,
+        apiKey,
+        userPersona?.description
+      );
+      console.log(`[App] ✅ Description generated:`, descriptionResult.description.substring(0, 50));
+      
+      // 线3：生成嘲讽的 emoji 融合（独立进行，每次都重新生成）
+      console.log(`[App] 🎨 Starting emoji fusion generation (history length: ${history.length})...`);
+      const emojiResult = await generateEmojiFusion(
+        history,
+        apiKey
+      );
+      console.log(`[App] ✅ Emoji fusion result:`, {
+        emojis: emojiResult.emojiFusion,
+        hasUrl: !!emojiResult.fusionUrl,
+        url: emojiResult.fusionUrl?.substring(0, 80),
+        rawResponse: emojiResult.rawResponse
+      });
+      
+      // 更新状态（强制更新，即使看起来相同）
+      setUserPersona({
+        description: descriptionResult.description,
+        emojiFusion: emojiResult.emojiFusion
+      });
+      
+      // 直接使用从 metadata.json 获取的 URL（每次更新）
+      setEmojiFusionImage(emojiResult.fusionUrl);
+      
+      addLog('PROFILE_UPDATE', 'User Persona Updated (Stage 4)', {
+        nickname: nicknameResult.nickname,
+        emoji_fusion: emojiResult.emojiFusion.join(' '),
+        fusion_image: emojiResult.fusionUrl ? `✅ Generated: ${emojiResult.fusionUrl.substring(0, 60)}...` : '❌ Failed - using fallback',
+        description_preview: descriptionResult.description.substring(0, 100) + '...',
+        history_length: history.length
+      });
+    } catch (error) {
+      console.error("❌ Persona update failed", error);
+      addLog('PROFILE_UPDATE', 'User Persona Update Failed', { error: String(error) });
+    }
   };
 
   // Part 2: User clicks "Show" to apply Stage 2 results
@@ -699,6 +793,8 @@ const App: React.FC = () => {
                      logs={logs} 
                      onReset={handleReset}
                      className="space-y-6"
+                     userPersona={userPersona}
+                     emojiFusionImage={emojiFusionImage}
                   />
                 </div>
               </motion.div>
@@ -928,6 +1024,8 @@ const App: React.FC = () => {
                userProfile={userProfile} 
                logs={logs} 
                onReset={handleReset}
+               userPersona={userPersona}
+               emojiFusionImage={emojiFusionImage}
              />
           </div>
 
