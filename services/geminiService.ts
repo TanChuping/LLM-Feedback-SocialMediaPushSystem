@@ -19,9 +19,12 @@ async function callGroqWithRetry(
 ): Promise<any> {
   const effectiveKey = apiKey || DEFAULT_KEY;
 
-  if (!effectiveKey) {
+  if (!effectiveKey || effectiveKey.trim().length === 0) {
+    console.error(`[${tag}] ❌ No Groq API Key provided. apiKey:`, apiKey ? `Present (${apiKey.length} chars)` : 'Missing', 'DEFAULT_KEY:', DEFAULT_KEY ? 'Present' : 'Missing');
     throw new Error("No Groq API Key provided.");
   }
+  
+  console.log(`[${tag}] 🔑 Using API key:`, effectiveKey ? `Present (${effectiveKey.length} chars)` : 'Missing');
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {

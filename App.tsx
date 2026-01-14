@@ -578,6 +578,17 @@ const App: React.FC = () => {
     try {
       console.log(`[App] 🎭 Starting Stage 4 update with ${history.length} feedback items`);
       console.log(`[App] 📝 Latest feedback:`, history[history.length - 1] || 'None');
+      console.log(`[App] 🔑 API Key status:`, apiKey ? `Present (${apiKey.length} chars)` : 'Missing - will use default');
+      
+      // 检查是否有 API key，如果没有则跳过（避免在部署环境中失败）
+      if (!apiKey || apiKey.trim().length === 0) {
+        console.warn(`[App] ⚠️ No API key provided, skipping persona update. User needs to set API key.`);
+        addLog('PROFILE_UPDATE', 'User Persona Update Skipped (No API Key)', { 
+          note: 'Please set your Groq API key to enable persona updates',
+          history_length: history.length
+        });
+        return;
+      }
       
       // 线1：生成用户昵称（嘲讽的）
       const nicknameResult = await generateUserNickname(
@@ -590,6 +601,7 @@ const App: React.FC = () => {
       // 更新用户名字
       if (nicknameResult.nickname && nicknameResult.nickname !== currentProfile.name) {
         setUserProfile(prev => ({ ...prev, name: nicknameResult.nickname }));
+        console.log(`[App] ✅ User name updated to: ${nicknameResult.nickname}`);
       }
       
       // 线2：生成用户画像描述（只基于反馈，不涉及标签和emoji）
@@ -614,13 +626,20 @@ const App: React.FC = () => {
       });
       
       // 更新状态（强制更新，即使看起来相同）
-      setUserPersona({
+      // 使用函数式更新确保状态正确更新
+      setUserPersona(prev => ({
         description: descriptionResult.description,
         emojiFusion: emojiResult.emojiFusion
-      });
+      }));
       
       // 直接使用从 metadata.json 获取的 URL（每次更新）
       setEmojiFusionImage(emojiResult.fusionUrl);
+      
+      console.log(`[App] ✅ State updated:`, {
+        description_length: descriptionResult.description.length,
+        emojiFusion: emojiResult.emojiFusion,
+        hasImage: !!emojiResult.fusionUrl
+      });
       
       addLog('PROFILE_UPDATE', 'User Persona Updated (Stage 4)', {
         nickname: nicknameResult.nickname,
@@ -631,7 +650,17 @@ const App: React.FC = () => {
       });
     } catch (error) {
       console.error("❌ Persona update failed", error);
-      addLog('PROFILE_UPDATE', 'User Persona Update Failed', { error: String(error) });
+      console.error("❌ Error details:", {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        history_length: history.length,
+        has_api_key: !!apiKey
+      });
+      addLog('PROFILE_UPDATE', 'User Persona Update Failed', { 
+        error: error instanceof Error ? error.message : String(error),
+        history_length: history.length,
+        has_api_key: !!apiKey
+      });
     }
   };
 
