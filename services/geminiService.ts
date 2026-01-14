@@ -97,8 +97,32 @@ export const analyzeFeedback = async (
   const profileInterests = userProfile.interests.map(i => `${i.tag}(${i.weight.toFixed(1)})`).join(', ');
   const profileDislikes = userProfile.dislikes.map(d => `${d.tag}(${d.weight.toFixed(1)})`).join(', ');
 
+  // Validate availableTags
+  if (!availableTags || availableTags.length === 0) {
+    console.error('[analyzeFeedback] ⚠️ CRITICAL: availableTags is empty or undefined!', {
+      availableTags,
+      type: typeof availableTags,
+      isArray: Array.isArray(availableTags)
+    });
+    return {
+      adjustments: [],
+      user_note: 'Analysis Failed: Tag vocabulary not loaded. Please refresh the page.',
+      explicit_search_query: null
+    };
+  }
+
   // Limit vocabulary size to prevent context overflow, but keep enough for variety
   const vocabularyList = availableTags.slice(0, 300).join('", "');
+  
+  // Log for debugging
+  if (vocabularyList.length === 0) {
+    console.error('[analyzeFeedback] ⚠️ vocabularyList is empty after processing!', {
+      availableTagsLength: availableTags.length,
+      availableTagsSample: availableTags.slice(0, 5)
+    });
+  } else {
+    console.log(`[analyzeFeedback] ✅ Vocabulary loaded: ${availableTags.length} tags, using first ${Math.min(300, availableTags.length)}`);
+  }
 
   const systemPrompt = `
     You are a Precision Recommendation Tuner. 

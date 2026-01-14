@@ -32,6 +32,17 @@ const EXPLICIT_TAGS = [...ALL_TAGS, ...EXTRA_TAGS, ...PET_AND_ENT_TAGS];
 const POST_DERIVED_TAGS = COMBINED_POSTS.flatMap(post => post.tags);
 const MASTER_TAG_POOL = Array.from(new Set([...EXPLICIT_TAGS, ...POST_DERIVED_TAGS]));
 
+// Debug: Log tag pool initialization
+console.log('[App] Tag Pool Initialized:', {
+  ALL_TAGS_count: ALL_TAGS.length,
+  EXTRA_TAGS_count: EXTRA_TAGS.length,
+  PET_AND_ENT_TAGS_count: PET_AND_ENT_TAGS.length,
+  EXPLICIT_TAGS_count: EXPLICIT_TAGS.length,
+  POST_DERIVED_TAGS_count: POST_DERIVED_TAGS.length,
+  MASTER_TAG_POOL_count: MASTER_TAG_POOL.length,
+  sample: MASTER_TAG_POOL.slice(0, 10)
+});
+
 const App: React.FC = () => {
   // --- State ---
   
@@ -103,6 +114,16 @@ const App: React.FC = () => {
   }, []);
 
   const allAvailableTags = MASTER_TAG_POOL;
+  
+  // Debug: Log when allAvailableTags is used
+  useEffect(() => {
+    if (allAvailableTags.length === 0) {
+      console.error('[App] ⚠️ CRITICAL: allAvailableTags is empty!', {
+        MASTER_TAG_POOL_length: MASTER_TAG_POOL.length,
+        COMBINED_POSTS_length: COMBINED_POSTS.length
+      });
+    }
+  }, []);
 
   const totalPages = Math.ceil(allRankedPosts.length / ITEMS_PER_PAGE);
   const visiblePosts = useMemo(() => {
