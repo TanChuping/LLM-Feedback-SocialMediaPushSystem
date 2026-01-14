@@ -8,7 +8,23 @@ export const PET_AND_ENT_TAGS = [
   
   // Entertainment Vibe Tags
   '🎬 Movies', '🌌 Sci-Fi', '🧙‍♂️ Fantasy', '🕹️ Switch', '🎮 Gaming',
-  '🇺🇸 USA Culture', '✨ Nostalgia' 
+  '🇺🇸 USA Culture', '✨ Nostalgia',
+  
+  // Music Tags (explicitly added so LLM can use them)
+  '🎶 Music', '🎵 Kpop', '🎤 Taylor Swift', '🎸 Guitar', '🎹 Music', '🎧 Spotify', '🎤 Live Music', '🎵 Instrument',
+  
+  // Relationship Tags (explicitly added so LLM can use them)
+  '💘 Dating', '💑 Relationships', '💔 Heartbreak', '❤️ Romance',
+  
+  // Common Tags from posts that should be in EXPLICIT_TAGS
+  '🚗 Cars', '💸 Money', '💸 Cost of Living', '💸 Money Saving', '💸 Student Discount',
+  '🍱 Foodie', '🍜 Chinese Food', '🍱 Restaurant Review',
+  '🌉 Bay Area', '🌉 San Francisco', '🌉 East Bay', '🌉 Silicon Valley',
+  '📖 Storytime', '📘 Guide', '📝 Course Review', '📝 Vocabulary',
+  '💼 Tech Career', '💼 Career Advice', '💼 Job Search', '💼 Interview Prep',
+  '🏠 Renting', '🏡 Real Estate', '🏠 Housing',
+  '🧘 Mental Health', '😰 Anxiety', '😡 Rant', '🎭 Emotional',
+  '❓ Question', '🆘 Help Needed', '🆘 Advice Needed', '🆘 Help'
 ];
 
 // Filling the gap between 229 and 300 with "Chinese/Bay Area/Student" style content.

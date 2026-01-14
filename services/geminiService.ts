@@ -112,7 +112,14 @@ export const analyzeFeedback = async (
   }
 
   // Limit vocabulary size to prevent context overflow, but keep enough for variety
+  // IMPORTANT: availableTags is already deduplicated and ordered (EXPLICIT_TAGS first, then POST_DERIVED_TAGS)
+  // So the first 300 tags will include all explicit tags plus the most common post-derived tags
   const vocabularyList = availableTags.slice(0, 300).join('", "');
+  
+  // Log which tags are included/excluded for debugging
+  if (availableTags.length > 300) {
+    console.log(`[analyzeFeedback] Using first 300 of ${availableTags.length} tags. Excluded: ${availableTags.slice(300, 310).join(', ')}...`);
+  }
   
   // Log for debugging
   if (vocabularyList.length === 0) {
@@ -159,6 +166,23 @@ export const analyzeFeedback = async (
          "explicit_search_query": string | null,
          "user_note": string 
        }
+       
+       **CRITICAL**: The "tag" field MUST be an EXACT match from the VOCABULARY_SAMPLE above. 
+       - DO NOT use just emoji (e.g., "🎵") - use the full tag (e.g., "🎶 Music" or "🎵 Kpop")
+       - DO NOT invent new tags - only use tags that exist in VOCABULARY_SAMPLE
+       
+       **TAG SELECTION RULES**:
+       - For general "music" requests, ALWAYS use "🎶 Music" (NOT "🎵 Kpop" unless user specifically mentions Kpop)
+       - "🎵 Kpop" is ONLY for K-pop/Korean pop music specifically
+       - "🎶 Music" is the general music tag - use this when user says "音乐", "music", "songs", etc.
+       - If user says "不是kpop" or "not kpop", they want "🎶 Music" not "🎵 Kpop"
+       - For dating/relationships: 
+         * Use "💘 Dating" for casual dating, dating apps, dating advice
+         * Use "💑 Relationships" for serious relationships, relationship advice, long-term partnerships
+         * Use "💔 Heartbreak" for breakups, heartbreak, emotional pain from relationships
+       - For cars/vehicles, use "🚗 Cars" (not just "🚗")
+       - For money/finance, use "💸 Money" or more specific tags like "💸 Cost of Living", "💸 Money Saving"
+       - Always use the FULL tag name from VOCABULARY_SAMPLE, never just emoji or just text
 
     5. **SCALING**:
        - "I love this": Primary +6, Secondary +2
@@ -298,15 +322,26 @@ export const pruneUserProfile = async (
     OUTPUT JSON: { "decay": [{ "tag": string, "delta": number }], "reason": string }
     
     CRITICAL RULES:
-    1. **CONSERVATIVE APPROACH**: Only decay tags if there is CLEAR EVIDENCE of contradiction or irrelevance. When in doubt, DO NOT decay.
-    2. **Contradiction Check**: Only if the user EXPLICITLY said they hate/dislike something MULTIPLE times, decay it. Single mentions are not enough.
-    3. **Semantic Deduplication**: Only if tags are TRULY redundant (e.g., "Coding" and "Computer Science" with same meaning), decay the lower weight one slightly (-1 to -2 max).
-    4. **Time-based Decay**: ONLY apply time-based decay if:
-       - Feedback history has at least 8+ items
-       - Tag hasn't been mentioned in the last 5+ feedbacks
-       - Tag weight is still high (> 10)
-    5. **Delta Range**: Must be negative (-1 to -5). Be conservative. Prefer -1 to -2 for most cases.
-    6. **Early Stage Protection**: If feedback count is less than 5, ONLY check for explicit contradictions. Do NOT apply time-based decay.
+    1. **RELEVANCE CHECK (PRIMARY)**: For each tag in CURRENT TAGS, check if it's mentioned or related to ANY feedback in the history.
+       - If a tag is NOT mentioned in the last 3-4 feedbacks AND is unrelated to the user's recent interests, apply decay (-1 to -3).
+       - Example: If user talks about "nightlife, dating, KTV" but has "Computer Science" tag, decay Computer Science.
+    
+    2. **Contradiction Check**: If the user EXPLICITLY said they hate/dislike something, decay it heavily (-3 to -5).
+    
+    3. **Semantic Deduplication**: If tags are TRULY redundant (e.g., "Coding" and "Computer Science" with same meaning), decay the lower weight one slightly (-1 to -2).
+    
+    4. **Time-based Decay (ACTIVE)**: Apply time-based decay if:
+       - Feedback history has at least 5+ items (reduced from 8)
+       - Tag hasn't been mentioned or boosted in the last 3+ feedbacks
+       - Tag is unrelated to recent feedback topics
+       - Apply -1 to -3 based on how irrelevant it is
+    
+    5. **Delta Range**: Must be negative (-1 to -5). 
+       - Mild irrelevance: -1 to -2
+       - Clear irrelevance: -2 to -3
+       - Strong contradiction: -3 to -5
+    
+    6. **ACTIVE CLEANUP**: You MUST identify at least 1-2 tags that are clearly irrelevant to recent feedback and decay them. Don't be too conservative.
   `;
 
   try {
@@ -319,15 +354,24 @@ export const pruneUserProfile = async (
       "Prune"
     );
 
+    console.log(`[pruneUserProfile] LLM raw response:`, {
+      decay_count: result.decay?.length || 0,
+      decay: result.decay,
+      reason: result.reason
+    });
+
     const adjustments: TagAdjustment[] = (result.decay || []).map((d: any) => ({
       tag: d.tag,
       category: 'interest',
       delta: d.delta < 0 ? d.delta : -Math.abs(d.delta) // Ensure negative
     }));
 
+    console.log(`[pruneUserProfile] Processed adjustments:`, adjustments);
+
     return { adjustments, reason: result.reason || "Routine cleanup" };
 
   } catch (error: any) {
+    console.error(`[pruneUserProfile] Error:`, error);
     return { adjustments: [], reason: `Error: ${error.message}` };
   }
 };

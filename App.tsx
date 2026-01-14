@@ -194,9 +194,15 @@ const App: React.FC = () => {
     // If no history, nothing to forget
     if (history.length === 0) return;
 
-    // console.log("Starting Background Cleanup...");
+    console.log(`[Stage 3] Starting cleanup with ${history.length} feedbacks, ${currentProfile.interests.length} tags`);
     // Pass the entire feedback history to finding conflicts
     const result = await pruneUserProfile(history, currentProfile, apiKey);
+    
+    console.log(`[Stage 3] Result:`, {
+      adjustments_count: result.adjustments.length,
+      reason: result.reason,
+      adjustments: result.adjustments.map(a => `${a.tag} (${a.delta})`)
+    });
     
     if (result.adjustments.length > 0) {
       // Apply silent updates
@@ -280,19 +286,60 @@ const App: React.FC = () => {
     // If LLM says "Interest" -> Add/Boost interest, REMOVE from dislike (Flip).
     // If LLM says "Dislike" -> Add/Boost dislike, REMOVE from interest (Flip).
     analysis.adjustments.forEach(adj => {
+      // Try to match LLM's tag to a tag in the available tags pool
+      // This handles cases where LLM returns just emoji (e.g., "🎵") instead of full tag (e.g., "🎶 Music")
+      let matchedTag = adj.tag;
       const normAdj = normalizeTag(adj.tag);
+      
+      // If the tag doesn't exist in availableTags, try to find a match
+      if (!allAvailableTags.includes(adj.tag)) {
+        // Strategy 1: Try exact emoji match first (e.g., "🎵" -> "🎵 Kpop")
+        const emojiMatch = allAvailableTags.find(tag => tag.trim().startsWith(adj.tag.trim()));
+        if (emojiMatch) {
+          matchedTag = emojiMatch;
+          console.log(`[Tag Matching] Matched "${adj.tag}" to "${matchedTag}" (emoji)`);
+        } else {
+          // Strategy 2: Try normalized match (e.g., "Music" -> "🎶 Music")
+          const normalizedMatch = allAvailableTags.find(tag => normalizeTag(tag) === normAdj);
+          if (normalizedMatch) {
+            matchedTag = normalizedMatch;
+            console.log(`[Tag Matching] Matched "${adj.tag}" to "${matchedTag}" (normalized)`);
+          } else {
+            // Strategy 3: Try semantic match (e.g., "music" -> "🎶 Music", "relationship" -> "💑 Relationships")
+            const semanticMatches = allAvailableTags.filter(tag => {
+              const tagNorm = normalizeTag(tag);
+              // Check if normalized tag contains the search term or vice versa
+              return tagNorm.includes(normAdj) || normAdj.includes(tagNorm);
+            });
+            
+            if (semanticMatches.length > 0) {
+              // Prefer tags that start with the same emoji or are more specific
+              const preferred = semanticMatches.find(tag => tag.trim().startsWith(adj.tag.trim())) 
+                || semanticMatches.find(tag => tag.length > adj.tag.length) // Prefer longer/more specific tags
+                || semanticMatches[0];
+              matchedTag = preferred;
+              console.log(`[Tag Matching] Matched "${adj.tag}" to "${matchedTag}" (semantic, from ${semanticMatches.length} options)`);
+            } else {
+              console.warn(`[Tag Matching] ⚠️ Could not match "${adj.tag}" to any tag in pool. Using as-is.`);
+              // Still use the original tag - it might be valid but just not in the first 300 tags
+            }
+          }
+        }
+      }
+      
+      const normMatched = normalizeTag(matchedTag);
 
       if (adj.category === 'interest') {
         // 1. Remove from dislikes if it exists there (Flip polarity)
-        const dislikeIdx = currentDislikes.findIndex(d => normalizeTag(d.tag) === normAdj);
+        const dislikeIdx = currentDislikes.findIndex(d => normalizeTag(d.tag) === normMatched);
         if (dislikeIdx >= 0) {
             currentDislikes.splice(dislikeIdx, 1);
         }
 
-        // 2. Add or Boost in Interests
-        let existingIdx = currentInterests.findIndex(i => i.tag === adj.tag);
+        // 2. Add or Boost in Interests (use matchedTag instead of adj.tag)
+        let existingIdx = currentInterests.findIndex(i => i.tag === matchedTag);
         if (existingIdx === -1) {
-           existingIdx = currentInterests.findIndex(i => normalizeTag(i.tag) === normAdj);
+           existingIdx = currentInterests.findIndex(i => normalizeTag(i.tag) === normMatched);
         }
 
         if (existingIdx >= 0) {
@@ -300,29 +347,30 @@ const App: React.FC = () => {
           let newWeight = currentInterests[existingIdx].weight + adj.delta;
           newWeight = Math.min(newWeight, MAX_TAG_WEIGHT);
           currentInterests[existingIdx].weight = newWeight;
-          currentInterests[existingIdx].tag = adj.tag; // update casing
+          currentInterests[existingIdx].tag = matchedTag; // update to matched tag
         } else {
           // New interest
           if (adj.delta > 0) {
             const initialWeight = Math.min(adj.delta, MAX_TAG_WEIGHT);
-            currentInterests.push({ tag: adj.tag, weight: initialWeight });
+            currentInterests.push({ tag: matchedTag, weight: initialWeight });
+            console.log(`[Tag Addition] Added new interest: "${matchedTag}" (weight: ${initialWeight})`);
           }
         }
 
       } else if (adj.category === 'dislike') {
         // 1. Remove from interests if it exists there (Flip polarity)
-        const interestIdx = currentInterests.findIndex(i => normalizeTag(i.tag) === normAdj);
+        const interestIdx = currentInterests.findIndex(i => normalizeTag(i.tag) === normMatched);
         if (interestIdx >= 0) {
             // "Move" logic: If it was a strong interest, we don't just delete it,
             // we actively add it to dislikes with the delta power.
             currentInterests.splice(interestIdx, 1);
         }
 
-        // 2. Add or Boost in Dislikes
+        // 2. Add or Boost in Dislikes (use matchedTag instead of adj.tag)
         const impact = Math.abs(adj.delta); // Dislike score is always positive magnitude in list
-        let existingIdx = currentDislikes.findIndex(d => d.tag === adj.tag);
+        let existingIdx = currentDislikes.findIndex(d => d.tag === matchedTag);
         if (existingIdx === -1) {
-            existingIdx = currentDislikes.findIndex(d => normalizeTag(d.tag) === normAdj);
+            existingIdx = currentDislikes.findIndex(d => normalizeTag(d.tag) === normMatched);
         }
 
         if (existingIdx >= 0) {
@@ -332,7 +380,8 @@ const App: React.FC = () => {
         } else {
            if (impact > 0) {
              const initialWeight = Math.min(impact, MAX_TAG_WEIGHT);
-             currentDislikes.push({ tag: adj.tag, weight: initialWeight });
+             currentDislikes.push({ tag: matchedTag, weight: initialWeight });
+             console.log(`[Tag Addition] Added new dislike: "${matchedTag}" (weight: ${initialWeight})`);
            }
         }
       }
