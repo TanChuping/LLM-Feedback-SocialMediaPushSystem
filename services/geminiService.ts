@@ -124,6 +124,12 @@ export const analyzeFeedback = async (
     console.log(`[analyzeFeedback] ✅ Vocabulary loaded: ${availableTags.length} tags, using first ${Math.min(300, availableTags.length)}`);
   }
 
+  // Check if profile is empty to provide better context to LLM
+  const isProfileEmpty = !profileInterests || profileInterests.trim().length === 0;
+  const profileStatusNote = isProfileEmpty 
+    ? "⚠️ NOTE: User profile is currently EMPTY (no interests). You MUST add new tags based on their feedback. This is normal for new users or after profile cleanup."
+    : "";
+
   const systemPrompt = `
     You are a Precision Recommendation Tuner. 
     Your goal is to parse user feedback and output specific, *weighted* adjustments to their profile tags.
@@ -140,10 +146,12 @@ export const analyzeFeedback = async (
        - Look at the "CURRENT_PROFILE". 
        - If the user hates something currently in "Interests", output a 'dislike' adjustment to Flip it.
        - If the user loves something in "Dislikes", output an 'interest' adjustment.
+       - **IMPORTANT**: If LIKES is empty, you MUST still add tags based on user feedback. Empty profile is normal and requires you to build it from scratch.
 
     3. **EXPLICIT SEARCH INTENT**:
        - If the user explicitly says "Show me X", "I want to see Y", "Search for Z", extract "X Y Z" as a keyword string.
        - If they just say "I like this" or "This sucks", search intent is null.
+       - Even if the user says "看看X" or "推荐X" (Chinese), extract "X" as explicit_search_query.
 
     4. **OUTPUT FORMAT**:
        JSON: { 
@@ -158,17 +166,23 @@ export const analyzeFeedback = async (
        - "I hate this": Dislike +8 (Strong filter)
        - "Not for me": Dislike +4
        - **MAX DELTA IS 10.**
+
+    6. **EMPTY PROFILE HANDLING**:
+       - If CURRENT_PROFILE shows empty LIKES, treat this as a fresh start.
+       - You MUST output adjustments based on the feedback, even if profile is empty.
+       - Do NOT return empty adjustments array just because profile is empty.
   `;
 
   const userPrompt = `
     CONTENT_CONTEXT: "${contentContext}"
     CURRENT_PROFILE: 
-      - LIKES: [${profileInterests}]
-      - DISLIKES: [${profileDislikes}]
+      - LIKES: [${profileInterests || "(empty - new user or profile reset)"}]
+      - DISLIKES: [${profileDislikes || "(empty)"}]
+    ${profileStatusNote}
     
     USER_FEEDBACK: "${feedbackText}"
     
-    TASK: Identify Primary Driver, Secondary Contexts, and any Explicit Search Keywords.
+    TASK: Identify Primary Driver, Secondary Contexts, and any Explicit Search Keywords. ${isProfileEmpty ? "Since profile is empty, you MUST add tags based on this feedback." : ""}
   `;
 
   try {
@@ -256,6 +270,13 @@ export const pruneUserProfile = async (
   providedKey: string
 ): Promise<{ adjustments: TagAdjustment[], reason: string }> => {
   
+  // CRITICAL: Only run cleanup if we have enough feedback history (at least 3 items)
+  // This prevents premature tag decay when user just started
+  if (history.length < 3) {
+    console.log(`[pruneUserProfile] Skipping cleanup: history too short (${history.length} items, need at least 3)`);
+    return { adjustments: [], reason: `History too short (${history.length} items). Need at least 3 feedbacks before cleanup.` };
+  }
+  
   if (userProfile.interests.length < 3) return { adjustments: [], reason: "Profile too small" };
 
   const latestFeedback = history[history.length - 1] || "";
@@ -272,14 +293,20 @@ export const pruneUserProfile = async (
     CURRENT TAGS: [${currentTags}]
     LATEST FEEDBACK: "${latestFeedback}"
     FULL FEEDBACK HISTORY: "${historyStr}"
+    FEEDBACK COUNT: ${history.length}
 
     OUTPUT JSON: { "decay": [{ "tag": string, "delta": number }], "reason": string }
     
-    RULES:
-    1. **Contradiction Check**: If the user said "I hate gaming" 5 messages ago, but "Gaming" is still a high weight tag, decay it heavily.
-    2. **Semantic Deduplication**: If "Coding" and "Computer Science" both exist, decay the lower weight one slightly to consolidate.
-    3. **Short-term vs Long-term**: Prioritize recent feedback. If they liked "Cats" 10 messages ago but haven't mentioned it since, apply a small decay (-1).
-    4. **Delta Range**: Must be negative (-1 to -8).
+    CRITICAL RULES:
+    1. **CONSERVATIVE APPROACH**: Only decay tags if there is CLEAR EVIDENCE of contradiction or irrelevance. When in doubt, DO NOT decay.
+    2. **Contradiction Check**: Only if the user EXPLICITLY said they hate/dislike something MULTIPLE times, decay it. Single mentions are not enough.
+    3. **Semantic Deduplication**: Only if tags are TRULY redundant (e.g., "Coding" and "Computer Science" with same meaning), decay the lower weight one slightly (-1 to -2 max).
+    4. **Time-based Decay**: ONLY apply time-based decay if:
+       - Feedback history has at least 8+ items
+       - Tag hasn't been mentioned in the last 5+ feedbacks
+       - Tag weight is still high (> 10)
+    5. **Delta Range**: Must be negative (-1 to -5). Be conservative. Prefer -1 to -2 for most cases.
+    6. **Early Stage Protection**: If feedback count is less than 5, ONLY check for explicit contradictions. Do NOT apply time-based decay.
   `;
 
   try {

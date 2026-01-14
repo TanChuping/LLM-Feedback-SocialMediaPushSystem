@@ -212,12 +212,12 @@ const App: React.FC = () => {
             }
 
             if (idx >= 0) {
-              // STRICT LIMIT: Max decay is -10. 
-              // adj.delta should be negative. We clamp it between -10 and 0.
-              // e.g. if delta is -30, we make it -10.
-              // e.g. if delta is -5, we keep -5.
+              // STRICT LIMIT: Max decay is -5 (matching prompt limit). 
+              // adj.delta should be negative. We clamp it between -5 and 0.
+              // e.g. if delta is -10, we make it -5.
+              // e.g. if delta is -2, we keep -2.
               let safeDelta = adj.delta;
-              if (safeDelta < -10) safeDelta = -10; // Hard clamp max penalty
+              if (safeDelta < -5) safeDelta = -5; // Hard clamp max penalty (reduced from -10 to -5)
               if (safeDelta > 0) safeDelta = 0;     // Ensure it's only decay
 
               updatedInterests[idx].weight += safeDelta;
