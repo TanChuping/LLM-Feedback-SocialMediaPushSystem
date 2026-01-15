@@ -1,6 +1,6 @@
 import { FeedbackAnalysisResult, Post, UserProfile, TagAdjustment, WeightedTag } from "../types";
 import { AVAILABLE_EMOJIS } from "../data/availableEmojis";
-import { getCombinationsListForPrompt, getFusionUrl } from "./emojiCombinations";
+import { getCombinationsForEmoji, getCombinationsListForPrompt, getFusionUrl } from "./emojiCombinations";
 
 // Groq Configuration
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -546,6 +546,82 @@ export const generateEmojiFusion = async (
 
   const recentHistory = feedbackHistory.slice(-10).join(" | ");
   const latestFeedback = feedbackHistory[feedbackHistory.length - 1] || '';
+  const feedbackLower = latestFeedback.toLowerCase();
+
+  // 记录最近一次组合，避免重复
+  const getLastFusion = (): string[] | null => {
+    try {
+      const raw = localStorage.getItem('lastEmojiFusion');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr) && arr.length === 2) return arr;
+      }
+    } catch {}
+    return null;
+  };
+  const saveFusion = (pair: string[]) => {
+    try { localStorage.setItem('lastEmojiFusion', JSON.stringify(pair)); } catch {}
+  };
+
+  // 简单词面映射，若用户直接提及具体物品/情绪，则直接用对应 emoji
+  const literalMap: Array<[string | RegExp, string]> = [
+    [/狗|dog/, '🐶'],
+    [/猫|cat/, '🐱'],
+    [/面包|bread/, '🍞'],
+    [/寿司|sushi/, '🍣'],
+    [/拉面|ramen/, '🍜'],
+    [/披萨|pizza/, '🍕'],
+    [/啤酒|beer/, '🍻'],
+    [/咖啡|coffee/, '☕'],
+    [/鸡|鸡肉|chicken/, '🍗'],
+    [/开心|快乐|高兴|happy/, '😄'],
+    [/生气|愤怒|angry/, '😡'],
+    [/难过|伤心|sad/, '😢'],
+    [/爱心|love/, '❤️'],
+  ];
+
+  const findLiteralEmoji = (): string | null => {
+    for (const [pattern, emoji] of literalMap) {
+      if (typeof pattern === 'string') {
+        if (feedbackLower.includes(pattern)) return emoji;
+      } else if (pattern.test(latestFeedback) || pattern.test(feedbackLower)) {
+        return emoji;
+      }
+    }
+    // 如果用户直接输入了 emoji 本身
+    for (const ch of latestFeedback) {
+      if (AVAILABLE_EMOJIS.includes(ch)) return ch;
+    }
+    return null;
+  };
+
+  // 如果用户直接提到了具体 emoji/物品，直接用真实组合，避免走两次 LLM
+  const literalEmoji = findLiteralEmoji();
+  if (literalEmoji) {
+    const combos = await getCombinationsForEmoji(literalEmoji);
+    const last = getLastFusion();
+    let chosen = combos.find(c => !(last && c.leftEmoji === last[0] && c.rightEmoji === last[1])) || combos[0];
+
+    if (chosen) {
+      const url = await getFusionUrl(chosen.leftEmoji, chosen.rightEmoji);
+      if (url) {
+        saveFusion([chosen.leftEmoji, chosen.rightEmoji]);
+        return {
+          emojiFusion: [chosen.leftEmoji, chosen.rightEmoji],
+          fusionUrl: url,
+          rawResponse: { literal: literalEmoji, note: 'Literal keyword -> direct combo' }
+        };
+      }
+    }
+    // 若没有组合，回退自组合
+    const fallbackUrl = await getFusionUrl(literalEmoji, literalEmoji);
+    saveFusion([literalEmoji, literalEmoji]);
+    return {
+      emojiFusion: [literalEmoji, literalEmoji],
+      fusionUrl: fallbackUrl,
+      rawResponse: { literal: literalEmoji, note: 'Literal keyword fallback self' }
+    };
+  }
   
   // 优先选择常用的、与反馈相关的 emoji，确保包含食物、情绪等常用类别
   // 先提取常用的食物、情绪、活动类 emoji
@@ -720,15 +796,33 @@ ${limitedCombinationsList}
     
     if (emojis.length >= 2) {
       console.log(`[EmojiFusion] Parsed emojis:`, emojis);
-      const fusionUrl = await getFusionUrl(emojis[0], emojis[1]);
-      if (fusionUrl) {
+      let finalPair: string[] = [emojis[0], emojis[1]];
+      let finalUrl = await getFusionUrl(finalPair[0], finalPair[1]);
+
+      const last = getLastFusion();
+      if (last && last[0] === finalPair[0] && last[1] === finalPair[1]) {
+        console.log('[EmojiFusion] Detected same as last fusion, trying alternative...');
+        const combos = await getCombinationsForEmoji(validMainEmoji);
+        const alt = combos.find(c => !(c.leftEmoji === last[0] && c.rightEmoji === last[1]));
+        if (alt) {
+          const altUrl = await getFusionUrl(alt.leftEmoji, alt.rightEmoji);
+          if (altUrl) {
+            finalPair = [alt.leftEmoji, alt.rightEmoji];
+            finalUrl = altUrl;
+            console.log('[EmojiFusion] Switched to alternate fusion to avoid repeat:', finalPair);
+          }
+        }
+      }
+
+      if (finalUrl) {
+        saveFusion(finalPair);
         return {
-          emojiFusion: [emojis[0], emojis[1]],
-          fusionUrl: fusionUrl,
+          emojiFusion: finalPair,
+          fusionUrl: finalUrl,
           rawResponse: { step1: step1Result, step2: step2Result }
         };
       } else {
-        console.warn(`[EmojiFusion] Fusion URL not found for ${emojis[0]} + ${emojis[1]}`);
+        console.warn(`[EmojiFusion] Fusion URL not found for ${finalPair[0]} + ${finalPair[1]}`);
       }
     } else {
       console.warn(`[EmojiFusion] Failed to parse emojis from: "${selected}", parsed:`, emojis);
@@ -736,6 +830,7 @@ ${limitedCombinationsList}
 
     // 回退：使用主 emoji 的第一个组合
     const fallbackUrl = await getFusionUrl(validMainEmoji, validMainEmoji);
+    saveFusion([validMainEmoji, validMainEmoji]);
     return {
       emojiFusion: [validMainEmoji, validMainEmoji],
       fusionUrl: fallbackUrl,

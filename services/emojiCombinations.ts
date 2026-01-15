@@ -3,19 +3,61 @@
  * 从 metadata.json 中查找特定 emoji 的所有可能组合
  */
 
-// 动态加载 metadata，避免文件不存在时崩溃
+// 动态加载 metadata（优先分片，其次单文件）
 let metadata: any = null;
+
+async function loadMetadataFromParts(): Promise<any | null> {
+  const baseUrl = import.meta.env.BASE_URL || '/';
+  const manifestPaths = [
+    `${baseUrl}metadata-parts/manifest.json`,
+    '/metadata-parts/manifest.json'
+  ];
+
+  for (const mPath of manifestPaths) {
+    try {
+      const mRes = await fetch(mPath);
+      if (!mRes.ok) continue;
+      const manifest = await mRes.json();
+      const parts = manifest?.parts;
+      if (!parts || parts <= 0) continue;
+
+      const merged: any = { knownSupportedEmoji: [], data: {} };
+      for (let i = 0; i < parts; i++) {
+        const pRes = await fetch(`${baseUrl}metadata-parts/part-${i}.json`);
+        if (!pRes.ok) throw new Error('part fetch failed');
+        const pJson = await pRes.json();
+        if (pJson?.data) {
+          Object.assign(merged.data, pJson.data);
+        }
+        if (merged.knownSupportedEmoji.length === 0 && Array.isArray(pJson?.knownSupportedEmoji)) {
+          merged.knownSupportedEmoji = pJson.knownSupportedEmoji;
+        }
+      }
+      return merged;
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
+}
 
 async function loadMetadata() {
   if (metadata) return metadata;
   
-  // 获取 base URL（Vite 会自动注入，开发环境是 '/'，生产环境是 '/LLM-Feedback-SocialMediaPushSystem/'）
+  // 优先分片
+  const parts = await loadMetadataFromParts();
+  if (parts) {
+    metadata = parts;
+    return metadata;
+  }
+  
+  // 回退单文件
   const baseUrl = import.meta.env.BASE_URL || '/';
   const paths = [
     `${baseUrl}metadata.json`,
-    '/metadata.json', // 回退路径
+    '/metadata.json',
     `${baseUrl}data/metadata.json`,
-    '/data/metadata.json' // 回退路径
+    '/data/metadata.json'
   ];
   
   for (const path of paths) {
@@ -23,17 +65,13 @@ async function loadMetadata() {
       const response = await fetch(path);
       if (response.ok) {
         metadata = await response.json();
-        console.log(`[EmojiCombinations] ✅ Loaded metadata.json from ${path}`);
         return metadata;
       }
     } catch (error) {
-      // 继续尝试下一个路径
       continue;
     }
   }
   
-  console.warn('[EmojiCombinations] ⚠️ Failed to load metadata.json from all paths, using fallback');
-  // 回退：返回空对象
   metadata = {};
   return metadata;
 }
