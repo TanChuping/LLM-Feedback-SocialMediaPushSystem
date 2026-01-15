@@ -62,8 +62,7 @@ The system runs entirely client-side to demonstrate immediate responsiveness and
 
 7.  **Stage 4: User Persona & Avatar (Background):**
     *   Generates a textual user profile description based on feedback history.
-    *   Creates a satirical emoji fusion avatar using Google Emoji Kitchen, reflecting the user's current state (e.g., "dating weeb" → 🤡💔).
-    *   Dynamically generates a mocking nickname (max 3 words) that evolves with user interactions (e.g., "horny programmer", "muscle musician", "Mr.nice guy").
+    *   Creates a satirical emoji fusion avatar using Google Emoji Kitchen.
 
 ---
 
