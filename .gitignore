@@ -31,3 +31,4 @@ dist-ssr
 # Emoji Kitchen metadata (too large for git, downloaded at runtime)
 data/metadata.json
 public/metadata.json
+public/emoji-index/

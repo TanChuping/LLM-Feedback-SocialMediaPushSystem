@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/buildEmojiIndex.js",
+    "prebuild": "node scripts/buildEmojiIndex.js",
     "dev": "vite",
     "dev:clean": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
     "build": "vite build",

@@ -915,6 +915,35 @@ export const generateEmojiFusion = async (
     try { localStorage.setItem('lastEmojiFusion', JSON.stringify(pair)); } catch {}
   };
 
+  const pickAnyRealCombo = async (preferred?: string): Promise<{ pair: string[]; url: string | null; meta?: any } | null> => {
+    const last = getLastFusion();
+    const seed = [
+      ...(preferred ? [preferred] : []),
+      '😀',
+      '😄',
+      '🐱',
+      '🍕',
+      '🤖',
+      ...AVAILABLE_EMOJIS.slice(0, 60)
+    ];
+    const candidates = Array.from(new Set(seed)).filter(Boolean);
+
+    for (const e of candidates) {
+      try {
+        const combos = await getCombinationsForEmoji(e);
+        if (!combos || combos.length === 0) continue;
+        const chosen = combos.find(c => !(last && c.leftEmoji === last[0] && c.rightEmoji === last[1])) || combos[0];
+        if (!chosen) continue;
+        const url = await getFusionUrl(chosen.leftEmoji, chosen.rightEmoji);
+        if (!url) continue;
+        return { pair: [chosen.leftEmoji, chosen.rightEmoji], url, meta: { sourceEmoji: e } };
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  };
+
   // 简单词面映射，若用户直接提及具体物品/情绪，则直接用对应 emoji
   const literalMap: Array<[string | RegExp, string]> = [
     [/狗|dog/, '🐶'],
@@ -965,13 +994,19 @@ export const generateEmojiFusion = async (
         };
       }
     }
-    // 若没有组合，回退自组合
-    const fallbackUrl = await getFusionUrl(literalEmoji, literalEmoji);
-    saveFusion([literalEmoji, literalEmoji]);
+    const fallback = await pickAnyRealCombo(literalEmoji);
+    if (fallback) {
+      saveFusion(fallback.pair);
+      return {
+        emojiFusion: fallback.pair,
+        fusionUrl: fallback.url,
+        rawResponse: { literal: literalEmoji, note: 'Literal keyword fallback real', ...fallback.meta }
+      };
+    }
     return {
-      emojiFusion: [literalEmoji, literalEmoji],
-      fusionUrl: fallbackUrl,
-      rawResponse: { literal: literalEmoji, note: 'Literal keyword fallback self' }
+      emojiFusion: ['😀', '😁'],
+      fusionUrl: null,
+      rawResponse: { literal: literalEmoji, note: 'Literal keyword fallback none' }
     };
   }
   
@@ -1065,22 +1100,19 @@ export const generateEmojiFusion = async (
     const combinationsList = await getCombinationsListForPrompt(validMainEmoji, 50); // 从 20 增加到 50
     
     if (!combinationsList || combinationsList.includes('没有找到')) {
-      // 如果主 emoji 没有组合，尝试主 emoji 和自己组合
-      console.log(`[EmojiFusion] No combinations found for ${validMainEmoji}, trying self-combination`);
-      const selfUrl = await getFusionUrl(validMainEmoji, validMainEmoji);
-      if (selfUrl) {
+      const fallback = await pickAnyRealCombo(validMainEmoji);
+      if (fallback) {
+        saveFusion(fallback.pair);
         return {
-          emojiFusion: [validMainEmoji, validMainEmoji],
-          fusionUrl: selfUrl,
-          rawResponse: { step1: step1Result, note: 'Using self-combination' }
+          emojiFusion: fallback.pair,
+          fusionUrl: fallback.url,
+          rawResponse: { step1: step1Result, note: 'No combinations found, picked real combo', ...fallback.meta }
         };
       }
-      // 如果自己组合也不行，使用默认
-      const defaultUrl = await getFusionUrl('😀', '😁');
       return {
         emojiFusion: ['😀', '😁'],
-        fusionUrl: defaultUrl,
-        rawResponse: { step1: step1Result, note: 'No combinations found, using default' }
+        fusionUrl: null,
+        rawResponse: { step1: step1Result, note: 'No combinations found, no real fallback' }
       };
     }
 
@@ -1178,21 +1210,26 @@ ${limitedCombinationsList}
       console.warn(`[EmojiFusion] Failed to parse emojis from: "${selected}", parsed:`, emojis);
     }
 
-    // 回退：使用主 emoji 的第一个组合
-    const fallbackUrl = await getFusionUrl(validMainEmoji, validMainEmoji);
-    saveFusion([validMainEmoji, validMainEmoji]);
+    const fallback = await pickAnyRealCombo(validMainEmoji);
+    if (fallback) {
+      saveFusion(fallback.pair);
+      return {
+        emojiFusion: fallback.pair,
+        fusionUrl: fallback.url,
+        rawResponse: { step1: step1Result, step2: step2Result, note: 'Fallback picked real combo', ...fallback.meta }
+      };
+    }
     return {
-      emojiFusion: [validMainEmoji, validMainEmoji],
-      fusionUrl: fallbackUrl,
-      rawResponse: { step1: step1Result, step2: step2Result, note: 'Fallback to self-combination' }
+      emojiFusion: ['😀', '😁'],
+      fusionUrl: null,
+      rawResponse: { step1: step1Result, step2: step2Result, note: 'Fallback none' }
     };
 
   } catch (error: any) {
     console.error("Emoji Fusion Generation Error", error);
-    const defaultUrl = await getFusionUrl('😀', '😁');
     return { 
       emojiFusion: ['😀', '😁'],
-      fusionUrl: defaultUrl,
+      fusionUrl: null,
       rawResponse: `Error: ${error.message}`
     };
   }
