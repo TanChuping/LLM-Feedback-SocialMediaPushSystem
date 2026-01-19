@@ -174,9 +174,13 @@ export const analyzeFeedback = async (
        - **IMPORTANT**: If LIKES is empty, you MUST still add tags based on user feedback. Empty profile is normal and requires you to build it from scratch.
 
     3. **EXPLICIT SEARCH INTENT**:
-       - If the user explicitly says "Show me X", "I want to see Y", "Search for Z", extract "X Y Z" as a keyword string.
-       - If they just say "I like this" or "This sucks", search intent is null.
-       - Even if the user says "看看X" or "推荐X" (Chinese), extract "X" as explicit_search_query.
+       - If the user explicitly says "Show me X", "I want to see Y", "Search for Z", extract keywords as a short string.
+       - If they just say "I like this" or "This sucks", explicit_search_query is null.
+       - If the user uses Chinese (e.g., "来些音乐帖子/推荐健身内容"), output BOTH bilingual tokens when possible, e.g.:
+         - "music 音乐"
+         - "gym 健身"
+         - "jobs 工作"
+       - Goal: help deterministic search match English tags like "🎶 Music" even when user wrote Chinese.
 
     4. **TOPIC vs FRAMING vs CONDUCT (principle, not patch)**:
        - First decide: are they attacking the subject, the framing/bias, or the conduct shown?
@@ -191,12 +195,31 @@ export const analyzeFeedback = async (
        - If the feedback targets a SPECIFIC entity (artist/celebrity/person/character/brand/school) rather than the whole category:
          Example: “这个明星我不喜欢/这人唱歌像电锯/辣耳朵” + title contains “Adele”.
          Then treat it as aspect-level: set dislike_scope="aspect", set soft_downrank_query to that ENTITY NAME (e.g., "Adele"), and DO NOT downweight broad tags like "🎶 Music".
+         IMPORTANT: Do NOT put the entity name into "adjustments.tag" unless it exists in VOCABULARY_SAMPLE.
        - Only set dislike_scope="topic" and downweight broad category tags when the user explicitly rejects the category itself (e.g., “不要再给我看音乐/I hate music”). 
+
+    5.5 **INSTRUMENT vs MUSIC (avoid collateral damage)**:
+       - If the user dislikes a specific instrument (e.g., 钢琴/piano) but says they still like music, treat this as aspect-level:
+         - dislike_scope="aspect"
+         - soft_downrank_query should include the instrument keyword ("piano 钢琴")
+         - DO NOT output a broad dislike adjustment for music category tags like "🎶 Music".
+       - Only downweight "🎶 Music" when the user explicitly rejects music as a whole.
 
     6. **DISLIKE SCOPE (important)**:
        - Set dislike_scope = "topic" ONLY when the user dislikes the topic itself (e.g., "I hate cats", "不要再给我看猫").
        - Set dislike_scope = "aspect" when the user dislikes the *way* it is presented or the *behavior* shown (bias, irresponsibility, clickbait, toxicity, etc.).
        - If dislike_scope = "aspect", you SHOULD avoid outputting strong 'dislike' adjustments for the subject tag. Instead, use soft_downrank_query to describe what to push down.
+
+    6.5 **VENUE / LIFESTYLE REJECTION (common, avoid mis-scope)**:
+       - If the user clearly refuses a venue/lifestyle and asks to stop seeing it (e.g., “别推夜店/我才不去这种地方/不要侮辱我/别再给我看酒吧俱乐部”), treat it as topic dislike for that venue category.
+       - In that case set dislike_scope="topic" and apply dislike adjustments to relevant tags if they exist in VOCABULARY_SAMPLE (e.g., "🌙 Nightlife", "🍷 Alcohol", "💃 Clubbing").
+       - Do NOT reduce unrelated umbrella topics (e.g., "🎶 Music") just because a nightlife post mentions music as secondary.
+
+    6.6 **MILD DISINTEREST (light damping, not hate)**:
+       - If the user shows mild disinterest / indifference (e.g., “不太想看/没啥兴趣/一般般/无感/不在意”) WITHOUT strong disgust/hate language:
+         - Prefer a small NEGATIVE interest delta on the relevant topic tag: category="interest", delta = -2 or -3 (only if the tag exists in VOCABULARY_SAMPLE).
+         - Do NOT create a strong topic dislike for this case.
+       - If the user says "完全不在意/随便/别再推" you may still use stronger negative interest delta (-4 to -6), but avoid adding a full dislike unless they explicitly hate it.
 
     7. **PREFERENCE TARGETS (structure)**:
        - Output preference_targets (max 3) to explicitly label what the feedback targets:
@@ -324,6 +347,13 @@ export const analyzeFeedback = async (
     fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'services/geminiService.ts:analyzeFeedback:normalized',message:'Stage1 analyzeFeedback normalized output',data:{normalizedKeys:Object.keys(normalized||{}),adjustmentsIsArray:Array.isArray(normalized.adjustments),adjustmentsLen:normalized.adjustments?.length??null,dislike_scope:normalized.dislike_scope,soft_downrank_query:normalized.soft_downrank_query??null,soft_downrank_strength:normalized.soft_downrank_strength,targetsLen:(normalized.preference_targets||[]).length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'})}).catch(()=>{});
     // #endregion
 
+    // #region agent log
+    try {
+      const neg = (normalized.adjustments || []).filter((a: any) => a?.category === 'interest' && typeof a?.delta === 'number' && a.delta < 0);
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'services/geminiService.ts:analyzeFeedback:mild-disinterest',message:'Stage1 negative interest deltas (mild disinterest) check',data:{negativeCount:neg.length,negativeTags:neg.slice(0,5).map((a:any)=>({tag:a.tag,delta:a.delta}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'H_stage1'})}).catch(()=>{});
+    } catch {}
+    // #endregion
+
     return normalized;
 
   } catch (error: any) {
@@ -349,14 +379,33 @@ export const rerankFeed = async (
   
   if (topPosts.length === 0) return { orderedIds: [] };
 
-  const candidates = topPosts
-    .map(p => `ID:${p.id} | Title:${p.title[language]} | Tags:${(p.tags || []).join(', ')}`)
-    .join('\n');
+  const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '...' : s);
+  const getPrimarySecondaryTags = (post: Post): { primary: string[]; secondary: string[] } => {
+    const tags = Array.isArray(post.tags) ? post.tags : [];
+    const weights = post.tagWeights || {};
 
-  // Parse deterministic soft-avoid signal (embedded by App.tsx) so Stage 2 can respect it.
-  const avoidMatch = explicitIntent?.match(/SOFT_AVOID \(aspect\):\s*"([^"]+)"\s*\(strength:(\d+)\)/i);
-  const avoidText = (avoidMatch?.[1] || '').trim();
-  const avoidStrength = Math.max(1, Math.min(3, Number(avoidMatch?.[2] || 1)));
+    const taggedWeights = tags
+      .map(t => ({ tag: t, w: typeof (weights as any)[t] === 'number' ? (weights as any)[t] : 1 }))
+      .sort((a, b) => b.w - a.w);
+
+    // Primary: top 3 by tagWeights; fallback to first 3 tags.
+    const primary = taggedWeights.length > 0
+      ? taggedWeights.slice(0, 3).map(x => x.tag)
+      : tags.slice(0, 3);
+
+    const primarySet = new Set(primary);
+    const secondary = tags.filter(t => !primarySet.has(t));
+    return { primary, secondary };
+  };
+  const candidates = topPosts
+    .map(p => {
+      const title = p.title?.[language] || p.title?.en || '';
+      const content = p.content?.[language] || p.content?.en || '';
+      const { primary, secondary } = getPrimarySecondaryTags(p);
+      const tags = (p.tags || []).join(', ');
+      return `ID:${p.id} | Title:${clip(title, 80)} | Snippet:${clip(content, 120)} | PrimaryTags:${clip(primary.join(', '), 120)} | SecondaryTags:${clip(secondary.join(', '), 160)} | Tags:${clip(tags, 160)}`;
+    })
+    .join('\n');
   
   const topInterests = userProfile.interests
     .sort((a,b) => b.weight - a.weight)
@@ -364,12 +413,22 @@ export const rerankFeed = async (
     .map(i => i.tag)
     .join(', ');
 
+  // #region agent log
+  try {
+    let ctxParsed: any = null;
+    try { ctxParsed = explicitIntent ? JSON.parse(explicitIntent) : null; } catch {}
+    const personaKw = (ctxParsed?.PERSONA_SIGNALS?.red_flag_keywords || ctxParsed?.persona_signals?.red_flag_keywords || []).slice?.(0, 10) || [];
+    const entityDislikes = (ctxParsed?.ENTITY_DISLIKES || ctxParsed?.entity_dislikes || []).slice?.(0, 10) || [];
+    const hardAvoid = (ctxParsed?.HARD_AVOID_POST_IDS || ctxParsed?.hard_avoid_post_ids || []).slice?.(0, 10) || [];
+    fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'services/geminiService.ts:rerankFeed:pre-call',message:'Stage2 rerankFeed pre-call context summary',data:{hasContext:!!explicitIntent,contextJsonParsed:!!ctxParsed,explicitSearch:(ctxParsed?.explicit_search_query||null),personaRedFlagKeywords:personaKw,entityDislikes:entityDislikes.map((x:any)=>x?.value||x).slice(0,5),hardAvoidIds:hardAvoid.map((x:any)=>x?.id||x).slice(0,5),candidateCount:topPosts.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+  } catch {}
+  // #endregion
+
   const systemPrompt = `
     You are a ranking engine. Re-order the provided posts based on the User's Profile and Explicit Request.
     
     USER PROFILE TOP INTERESTS: ${topInterests}
-    ${explicitIntent ? `CURRENT USER REQUEST: "${explicitIntent}"` : ''}
-    ${avoidText ? `AVOID_KEYWORDS (aspect-level, downrank only): "${avoidText}" (strength:${avoidStrength})` : ''}
+    You will also receive CURRENT_CONTEXT (recent feedback + persona signals + avoid instructions).
 
     CONTEXT:
     The candidate list provided may be a MIX of:
@@ -378,10 +437,18 @@ export const rerankFeed = async (
 
     RULES:
     1. If the User Request is specific (e.g. "Show me jobs"), prioritize the posts that match that topic ABOVE general interests.
+       - Treat CURRENT_CONTEXT.explicit_search_query as a strong, user-authored intent signal.
+       - If explicit_search_query is present, the top of the list should mostly satisfy it, unless blocked by HARD_AVOID_POST_IDS.
     2. Ensure the feed flows logically.
     3. AVOIDANCE (important):
-       - If AVOID_KEYWORDS is present, you MUST push posts whose Title or Tags match the avoid phrase/tokens toward the bottom of the list.
-       - Treat strength 3 as strong: put matching posts in the bottom ~20% unless the explicit request is *to see that topic*.
+       - If CURRENT_CONTEXT contains HARD_AVOID_POST_IDS, treat those IDs as "do not resurrect": keep them near the bottom of the list even if they match interests.
+       - If CURRENT_CONTEXT contains SOFT_AVOID_HINTS, treat those as hints: generally push matching titles/tags lower, but do not over-filter if the hint is noisy or conflicts with an explicit request.
+       - If CURRENT_CONTEXT contains ENTITY_DISLIKES, strongly downrank posts matching those entity strings in Title/Snippet/Tags (treat them as stable exceptions).
+       - If CURRENT_CONTEXT contains ASPECT_DISLIKES, downrank posts matching those aspect strings in Title/Snippet/Tags (weaker than ENTITY_DISLIKES).
+       - If CURRENT_CONTEXT contains PERSONA_SIGNALS (traits/red_flags/red_flag_keywords), use them as additional preference signals (especially during refined rerank).
+       - If red_flags contain patterns like "likes X but hates Y", treat Y as the exception (downrank Y) while keeping X high.
+       - TOP10 GUARDRAIL (must follow):
+         Any post that matches HARD_AVOID_POST_IDS, ENTITY_DISLIKES, or PERSONA_SIGNALS.red_flag_keywords MUST NOT appear in the first 10 results.
     4. Output strictly a JSON object: { "ids": ["id1", "id2", ...] }.
     5. Include ALL provided IDs.
   `;
@@ -391,10 +458,33 @@ export const rerankFeed = async (
       providedKey,
       [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `CANDIDATE POSTS (Mix of Algo & Search):\n${candidates}` }
+        { role: "user", content: `CURRENT_CONTEXT:\n${explicitIntent || '(none)'}\n\nCANDIDATE POSTS (Mix of Algo & Search):\n${candidates}` }
       ],
       "Rerank"
     );
+
+    // #region agent log
+    try {
+      let ctxParsed: any = null;
+      try { ctxParsed = explicitIntent ? JSON.parse(explicitIntent) : null; } catch {}
+      const personaKw: string[] = ((ctxParsed?.PERSONA_SIGNALS?.red_flag_keywords || ctxParsed?.persona_signals?.red_flag_keywords || []) as any[])
+        .map(x => String(x || '').toLowerCase())
+        .filter(Boolean);
+      const ent: string[] = ((ctxParsed?.ENTITY_DISLIKES || ctxParsed?.entity_dislikes || []) as any[])
+        .map(x => String((x && (x.value ?? x)) || '').toLowerCase())
+        .filter(Boolean);
+      const top10 = (result.ids || []).slice(0, 10);
+      const offenders: Array<{ id: string; hit: string }> = [];
+      for (const id of top10) {
+        const p = topPosts.find(x => x.id === id);
+        if (!p) continue;
+        const text = `${p.title.en} ${p.title.zh} ${p.content?.en || ''} ${p.content?.zh || ''} ${(p.tags||[]).join(' ')}`.toLowerCase();
+        const hit = personaKw.find(k => k.length >= 2 && text.includes(k)) || ent.find(k => k.length >= 2 && text.includes(k)) || null;
+        if (hit) offenders.push({ id, hit });
+      }
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'services/geminiService.ts:rerankFeed:post-call',message:'Stage2 rerankFeed result top10 redflag scan',data:{top10,top10RedflagHits:offenders,idsLen:(result.ids||[]).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+    } catch {}
+    // #endregion
 
     return { orderedIds: result.ids || [], rawResponse: result };
 
@@ -411,7 +501,8 @@ export const rerankFeed = async (
 export const pruneUserProfile = async (
   history: string[],
   userProfile: UserProfile,
-  providedKey: string
+  providedKey: string,
+  meta?: { recentlyBoostedTags?: string[] }
 ): Promise<{ adjustments: TagAdjustment[], reason: string }> => {
   
   // CRITICAL: Only run cleanup if we have enough feedback history (at least 3 items)
@@ -429,6 +520,7 @@ export const pruneUserProfile = async (
   
   // Format current tags with weights to help LLM decide what to kill
   const currentTags = userProfile.interests.map(i => `${i.tag} (Weight:${i.weight.toFixed(1)})`).join(', ');
+  const recentlyBoosted = (meta?.recentlyBoostedTags || []).slice(0, 8).join(', ');
 
   const systemPrompt = `
     You are a profile maintenance garbage collector.
@@ -437,6 +529,7 @@ export const pruneUserProfile = async (
     CURRENT TAGS: [${currentTags}]
     LATEST FEEDBACK: "${latestFeedback}"
     FULL FEEDBACK HISTORY: "${historyStr}"
+    RECENTLY_BOOSTED_TAGS: "${recentlyBoosted || '(none)'}"
     FEEDBACK COUNT: ${history.length}
 
     OUTPUT JSON: { "decay": [{ "tag": string, "delta": number }], "reason": string }
@@ -445,6 +538,9 @@ export const pruneUserProfile = async (
     1. **RELEVANCE CHECK (PRIMARY)**: For each tag in CURRENT TAGS, check if it's mentioned or related to ANY feedback in the history.
        - If a tag is NOT mentioned in the last 3-4 feedbacks AND is unrelated to the user's recent interests, apply decay (-1 to -3).
        - Example: If user talks about "nightlife, dating, KTV" but has "Computer Science" tag, decay Computer Science.
+       - IMPORTANT: Do NOT decay a tag just because the most recent feedback is on a different topic. If the tag appears anywhere in the last 6-8 feedback items, it is still relevant.
+       - IMPORTANT: Do NOT decay "strong" interests (Weight >= 6.0) unless there is an explicit contradiction/dislike in the feedback history.
+       - IMPORTANT: Do NOT decay any tag listed in RECENTLY_BOOSTED_TAGS. Those tags were just reinforced and must get a grace period.
     
     2. **Contradiction Check**: If the user EXPLICITLY said they hate/dislike something, decay it heavily (-3 to -5).
     
@@ -460,8 +556,8 @@ export const pruneUserProfile = async (
        - Mild irrelevance: -1 to -2
        - Clear irrelevance: -2 to -3
        - Strong contradiction: -3 to -5
-    
-    6. **ACTIVE CLEANUP**: You MUST identify at least 1-2 tags that are clearly irrelevant to recent feedback and decay them. Don't be too conservative.
+
+    6. **NO FORCED DECAY**: If you cannot confidently find irrelevant/contradicted tags, output an empty decay list.
   `;
 
   try {
@@ -583,7 +679,7 @@ export const generateUserPersonaSignals = async (
 
   const recent = feedbackHistory.slice(-10).join('\n');
 
-  const systemPrompt = `你是一个“用户反馈画像信号提取器”。只输出可用于推荐排序的结构化信号，不写长文，不写昵称，不写emoji。\n\n输入是用户最近的反馈（可能中英混杂）。\n\n你需要输出三组列表（每组最多5条，越短越好）：\n1) user_traits：稳定偏好/特征（尽量客观、有证据）\n2) red_flags：用户雷点/排斥点（通常是“喜欢X但讨厌Y角度/行为/质量”）\n3) red_flag_keywords：用于确定性匹配的短关键词/短语（最多5条），用来把相似内容在排序中压下去。\n\nred_flag_keywords 规则：\n- 必须短、可命中标题/正文/标签，不写长句\n- 中英文都可以\n- 优先输出“命名实体”的原样字符串（明星/歌手/角色/品牌/学校/公司/人名），例如标题出现的 \"Adele\"、\"DeepSeek\"。\n- 如果是内容质量/角度类，输出常见短语，如“标题党/低质量评测/刻板印象/糊弄小白/不尊重宠物”。\n\n输出JSON（字段必须存在）:\n{\n  \"user_traits\": [\"...\"],\n  \"red_flags\": [\"...\"],\n  \"red_flag_keywords\": [\"...\"]\n}`;
+  const systemPrompt = `你是一个“用户反馈画像信号提取器”。只输出可用于推荐排序的结构化信号，不写长文，不写昵称，不写emoji。\n\n输入是用户最近的反馈（可能中英混杂，且每条可能包含 Target 标题）。\n\n你需要输出三组列表（每组最多5条，越短越好）：\n1) user_traits：稳定偏好/特征（尽量客观、有证据）\n2) red_flags：用户雷点/排斥点（尽量用“喜欢X但讨厌Y”的具体表达）\n3) red_flag_keywords：用于确定性匹配的短关键词/短语（最多5条），用于把相似内容在排序中压下去。\n\n强约束（必须遵守）：\n- 只基于输入事实，不要脑补（禁止凭空造“富人/穷人/不关心XX”等未出现结论）。\n- 如果用户讨厌的是具体实体（明星/角色/品牌/公司/学校/人名），red_flags 必须写出该名字，例如“喜欢音乐但讨厌 Adele”。\n- red_flag_keywords 必须包含该名字的原样字符串（例如标题里的 \"Adele\"、\"散兵\"、\"DeepSeek\"），不要用“某些明星/特定明星/一些人”等泛化词。\n- 若无法给出具体名字，就不要编造；宁可输出空数组。\n\nred_flag_keywords 规则：\n- 短、可命中标题/正文/标签；不要写长句\n- 中英文都可以\n- 内容角度/质量类可用短语：\"标题党\" \"低质量评测\" \"小红书口吻\" \"集美小仙女\" 等\n\n输出JSON（字段必须存在）:\n{\n  \"user_traits\": [\"...\"],\n  \"red_flags\": [\"...\"],\n  \"red_flag_keywords\": [\"...\"]\n}`;
 
   const userPrompt = `最近反馈（最多10条，按时间从旧到新）：\n${recent}`;
 
@@ -650,15 +746,18 @@ export const generateUserPersonaDescription = async (
 
 命名实体要求（很重要）：
 - 如果 red_flags 涉及具体对象（明星/歌手/角色/品牌/学校/公司/人名），必须直接写出名字（从帖子标题或反馈里提取）。
-- red_flag_keywords 优先包含该名字的“原样字符串”（例如标题里出现的 "Adele"），这样排序层可以稳定命中标题。
+- red_flag_keywords 必须优先包含该名字的“原样字符串”（例如标题里出现的 "Adele"/"散兵"），这样排序层可以稳定命中标题。
+- 严禁使用泛化词：不要写“某些明星/特定明星/一些人/某个公司”。写不出名字就不要写这条。
 
-示例（仅示意）：
+示例（仅示意，必须具体到名字）：
 - red_flags: ["喜欢猫但讨厌拿猫取乐/不负责的养宠内容"]
 - red_flag_keywords: ["拿猫取乐", "不尊重宠物", "虐待宠物"]
 - red_flags: ["社区大学转学但讨厌低质量速成广告/刻板印象内容"]
 - red_flag_keywords: ["速成托福", "GPA2", "低级广告"]
-- red_flags: ["玩原神但讨厌散兵相关内容"]
+- red_flags: ["玩原神但讨厌 散兵 相关内容"]
 - red_flag_keywords: ["散兵"]
+- red_flags: ["喜欢音乐但讨厌 Adele"]
+- red_flag_keywords: ["Adele"]
 
 输出JSON（字段必须存在）:
 {

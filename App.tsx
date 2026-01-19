@@ -33,6 +33,7 @@ type NamedAvoid = {
 };
 
 const MAX_NAMED_AVOIDS = 10;
+const MAX_HARD_AVOID_POSTS = 10;
 
 // Merge data sources with ID deduplication (keep first occurrence)
 const allPostsRaw = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3, ...ADDITIONAL_POSTS_4];
@@ -85,6 +86,7 @@ const App: React.FC = () => {
   const aspectDislikesRef = useRef<NamedAvoid[]>([]);
   useEffect(() => { entityDislikesRef.current = entityDislikes; }, [entityDislikes]);
   useEffect(() => { aspectDislikesRef.current = aspectDislikes; }, [aspectDislikes]);
+  const recentlyBoostedTagsRef = useRef<{ tags: string[]; at: number; historyLen: number } | null>(null);
   
   // User Persona (Stage 4)
   const [userPersona, setUserPersona] = useState<UserPersona>({
@@ -123,7 +125,11 @@ const App: React.FC = () => {
   const personaRefineRunIdRef = useRef<string | null>(null);
   const refineBannerTimeoutRef = useRef<number | null>(null);
   const [refineBannerMessage, setRefineBannerMessage] = useState<string | null>(null);
-  const lastCleanupKeyRef = useRef<string | null>(null);
+  const [hardAvoidPosts, setHardAvoidPosts] = useState<Array<{ id: string; title: string; reason: string; createdAt: number }>>([]);
+  const hardAvoidPostsRef = useRef<Array<{ id: string; title: string; reason: string; createdAt: number }>>([]);
+  useEffect(() => { hardAvoidPostsRef.current = hardAvoidPosts; }, [hardAvoidPosts]);
+  const lastExplicitSearchRef = useRef<{ query: string; createdAt: number } | null>(null);
+  const stage3LogDedupeRef = useRef<string | null>(null);
   
   // Mobile Dashboard
   const [isMobileDashboardOpen, setIsMobileDashboardOpen] = useState(false);
@@ -213,9 +219,92 @@ const App: React.FC = () => {
       .slice(0, MAX_NAMED_AVOIDS);
   };
 
+  const upsertHardAvoidPost = (
+    prev: Array<{ id: string; title: string; reason: string; createdAt: number }>,
+    item: { id: string; title: string; reason: string; createdAt: number }
+  ) => {
+    const next = prev.map(x => ({ ...x }));
+    const idx = next.findIndex(x => x.id === item.id);
+    if (idx >= 0) {
+      next[idx] = { ...next[idx], ...item, createdAt: Math.max(next[idx].createdAt, item.createdAt) };
+    } else {
+      next.unshift(item);
+    }
+    return next
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, MAX_HARD_AVOID_POSTS);
+  };
+
+  const normalizeExplicitSearchQuery = (q: string | null | undefined): string | null => {
+    const raw = (q || '').trim();
+    if (!raw) return null;
+    const lower = raw.toLowerCase();
+    const additions: string[] = [];
+    // Minimal bilingual bridges so deterministic search can match English tags.
+    if (raw.includes('音乐') && !lower.includes('music')) additions.push('music');
+    if (raw.includes('健身') && !lower.includes('gym')) additions.push('gym');
+    if (raw.includes('工作') && !lower.includes('job')) additions.push('jobs');
+    if (raw.includes('电影') && !lower.includes('movie')) additions.push('movies');
+    if (raw.includes('恐怖') && !lower.includes('horror')) additions.push('horror');
+    if (raw.includes('股票') && !lower.includes('stocks')) additions.push('stocks');
+    if (additions.length === 0) return raw;
+    return `${raw} ${additions.join(' ')}`.trim();
+  };
+
+  const buildStage2Context = (args: {
+    feedbackText?: string;
+    analysisNote?: string;
+    explicitSearchQuery?: string | null;
+    softAvoidQuery?: string | null;
+    softAvoidStrength?: number;
+    history?: string[];
+    personaSignals?: { userTraits?: string[]; redFlags?: string[]; redFlagKeywords?: string[] };
+    hardAvoid?: Array<{ id: string; title: string; reason: string; createdAt: number }>;
+    source?: 'user_feedback' | 'persona_refine' | string;
+  }): string => {
+    const history = Array.isArray(args.history) ? args.history.slice(-5) : [];
+    const persona = args.personaSignals || userPersonaRef.current || {};
+    const hardAvoid = (args.hardAvoid || hardAvoidPostsRef.current || []).slice(0, 5);
+    const entityDislikes = (entityDislikesRef.current || []).slice(0, 5).map(x => ({ value: x.value, strength: x.strength }));
+    const aspectDislikes = (aspectDislikesRef.current || []).slice(0, 5).map(x => ({ value: x.value, strength: x.strength }));
+
+    const payload = {
+      source: args.source || 'user_feedback',
+      feedback: args.feedbackText || null,
+      analysis_note: args.analysisNote || null,
+      explicit_search_query: args.explicitSearchQuery ?? (lastExplicitSearchRef.current?.query || null),
+      soft_avoid_hints: args.softAvoidQuery
+        ? [{ query: args.softAvoidQuery, strength: Math.max(1, Math.min(3, Number(args.softAvoidStrength || 1))) }]
+        : [],
+      recent_feedback_history: history,
+      persona_signals: {
+        user_traits: (persona.userTraits || []).slice(0, 5),
+        red_flags: (persona.redFlags || []).slice(0, 5),
+        red_flag_keywords: (persona.redFlagKeywords || []).slice(0, 5)
+      },
+      hard_avoid_post_ids: hardAvoid.map(x => ({ id: x.id, title: x.title, reason: x.reason })),
+      // Duplicate “header-like” keys so the Stage2 prompt can reliably spot them even if it doesn't parse JSON.
+      HARD_AVOID_POST_IDS: hardAvoid.map(x => ({ id: x.id, title: x.title, reason: x.reason })),
+      SOFT_AVOID_HINTS: args.softAvoidQuery
+        ? [{ query: args.softAvoidQuery, strength: Math.max(1, Math.min(3, Number(args.softAvoidStrength || 1))) }]
+        : [],
+      ENTITY_DISLIKES: entityDislikes,
+      ASPECT_DISLIKES: aspectDislikes,
+      PERSONA_SIGNALS: {
+        user_traits: (persona.userTraits || []).slice(0, 5),
+        red_flags: (persona.redFlags || []).slice(0, 5),
+        red_flag_keywords: (persona.redFlagKeywords || []).slice(0, 5)
+      }
+    };
+
+    return JSON.stringify(payload);
+  };
+
   const shouldApplyTopicDislike = (feedback: string, matchedTag: string): boolean => {
     const f = (feedback || '').toLowerCase();
-    const stopWords = /(别给我推|不要再|别再|不想看|别给我看|stop showing|don'?t show me)/i.test(f);
+    // "Strong stop" phrases: user is explicitly asking to stop seeing this kind of content,
+    // even if they don't repeat the topic name verbatim (common in Chinese feedback).
+    const strongStop = /(别给我推|不要再|别再|不想看|不想看到|别给我看|别让我看到|一边去|别来|滚|烦死了|恶心|污染我心情|stop showing|don'?t show me)/i.test(f);
     const topicKey = normalizeTag(matchedTag); // emoji-stripped label
 
     // History-based: count repeated topic-level negatives (>=3)
@@ -229,7 +318,9 @@ const App: React.FC = () => {
 
     // Explicit stop only counts when they actually mention the topic (avoid false positives like “别给我推这种”)
     const mentionsTopic = topicKey.length > 0 && f.includes(topicKey);
-    const explicitStop = stopWords && mentionsTopic;
+    // If it's a strong stop phrase, we accept it as explicit stop even without topic string match.
+    // If it's not strong, we still require topic mention (precision).
+    const explicitStop = strongStop ? true : mentionsTopic;
 
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:shouldApplyTopicDislike',message:'Topic dislike gate decision',data:{topicKey,explicitStop,negCount:current},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H5'})}).catch(()=>{});
@@ -243,7 +334,7 @@ const App: React.FC = () => {
 
     return posts.map(p => {
       const baseScore = p.score ?? 0;
-      const text = `${p.title.en} ${p.title.zh} ${p.tags.join(' ')}`.toLowerCase();
+      const text = `${p.title.en} ${p.title.zh} ${p.content?.en || ''} ${p.content?.zh || ''} ${p.tags.join(' ')}`.toLowerCase();
 
       let penalty = 0;
       const hitReasons: string[] = [];
@@ -338,15 +429,11 @@ const App: React.FC = () => {
   const triggerBackgroundCleanup = async (currentProfile: UserProfile, history: string[]) => {
     // If no history, nothing to forget
     if (history.length === 0) return;
-    // Guard: avoid running cleanup twice for the same history snapshot (can happen with multiple Stage2 passes)
-    const last = history[history.length - 1] || '';
-    const cleanupKey = `${history.length}:${last}`;
-    if (lastCleanupKeyRef.current === cleanupKey) return;
-    lastCleanupKeyRef.current = cleanupKey;
 
     console.log(`[Stage 3] Starting cleanup with ${history.length} feedbacks, ${currentProfile.interests.length} tags`);
     // Pass the entire feedback history to finding conflicts
-    const result = await pruneUserProfile(history, currentProfile, apiKey);
+    const recentBoost = recentlyBoostedTagsRef.current?.tags || [];
+    const result = await pruneUserProfile(history, currentProfile, apiKey, { recentlyBoostedTags: recentBoost });
     
     console.log(`[Stage 3] Result:`, {
       adjustments_count: result.adjustments.length,
@@ -356,6 +443,7 @@ const App: React.FC = () => {
     
     if (result.adjustments.length > 0) {
       // Apply silent updates
+      const stage3LogKey = `${history.length}:${history[history.length - 1] || ''}:${result.adjustments.map(a => `${a.tag}:${a.delta}`).join('|')}`;
       setUserProfile(prev => {
         let updatedInterests = [...prev.interests];
         
@@ -384,16 +472,20 @@ const App: React.FC = () => {
         // Remove tags that fell below threshold
         const filteredInterests = updatedInterests.filter(i => i.weight > 0.1);
         
-        if (filteredInterests.length !== prev.interests.length || filteredInterests.some((i, idx) => i.weight !== prev.interests[idx]?.weight)) {
-            addLog('PROFILE_UPDATE', 'Forgetting Mechanism (Stage 3)', {
-              reason: result.reason,
-              history_referenced: history.length,
-              decayed_tags: result.adjustments.map(a => `${a.tag} (${a.delta} -> capped)`)
-            });
-        }
+        // React StrictMode may invoke state updaters twice in dev; keep this updater pure (no side effects).
         
         return { ...prev, interests: filteredInterests };
       });
+
+      // Log once, outside the state updater, with a small dedupe guard
+      if (stage3LogDedupeRef.current !== stage3LogKey) {
+        stage3LogDedupeRef.current = stage3LogKey;
+        addLog('PROFILE_UPDATE', 'Forgetting Mechanism (Stage 3)', {
+          reason: result.reason,
+          history_referenced: history.length,
+          decayed_tags: result.adjustments.map(a => `${a.tag} (${a.delta} -> capped)`)
+        });
+      }
     }
   };
 
@@ -406,8 +498,9 @@ const App: React.FC = () => {
       fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:entry',message:'Stage1 submit entered',data:{feedbackLen:text?.length||0,postId:post?.id||null,postTitleLen:postTitle?.length||0,postTagsLen:post?.tags?.length||0,historyLen:feedbackHistory?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'})}).catch(()=>{});
       // #endregion
 
-      // 1. Update History
-      const newHistory = [...feedbackHistory, text];
+      // 1. Update History (include target title so downstream persona/Stage2 can extract entities like "Adele")
+      const historyEntry = `Feedback: "${text}" | Target: "${postTitle}"`;
+      const newHistory = [...feedbackHistory, historyEntry];
       setFeedbackHistory(newHistory);
 
       addLog('FEEDBACK', 'User provided natural language feedback', { feedback: text, target_post: postTitle });
@@ -420,6 +513,10 @@ const App: React.FC = () => {
         apiKey, 
         allAvailableTags 
       );
+      const normalizedSearchQuery = normalizeExplicitSearchQuery(analysis.explicit_search_query || null);
+      if (normalizedSearchQuery) {
+        lastExplicitSearchRef.current = { query: normalizedSearchQuery, createdAt: Date.now() };
+      }
 
       // Defensive normalization: Groq may occasionally return a different schema.
       // Never let Stage 1 crash UI due to missing fields.
@@ -451,10 +548,18 @@ const App: React.FC = () => {
           if (t.type === 'aspect') addAspect.push({ value: String(t.value || '').trim(), strength });
         }
         if (addEntity.length > 0) {
-          setEntityDislikes(prev => addEntity.reduce((acc, it) => upsertNamedAvoid(acc, it.value, it.strength), prev));
+          // Apply synchronously to ref so Stage2 context building in this same tick sees the latest entity dislikes.
+          const base = (entityDislikesRef.current || []);
+          const next = addEntity.reduce((acc, it) => upsertNamedAvoid(acc, it.value, it.strength), base);
+          entityDislikesRef.current = next;
+          setEntityDislikes(next);
         }
         if (addAspect.length > 0) {
-          setAspectDislikes(prev => addAspect.reduce((acc, it) => upsertNamedAvoid(acc, it.value, it.strength), prev));
+          // Apply synchronously to ref so Stage2 context building in this same tick sees the latest aspect dislikes.
+          const base = (aspectDislikesRef.current || []);
+          const next = addAspect.reduce((acc, it) => upsertNamedAvoid(acc, it.value, it.strength), base);
+          aspectDislikesRef.current = next;
+          setAspectDislikes(next);
         }
 
         // #region agent log
@@ -508,11 +613,13 @@ const App: React.FC = () => {
     // Apply strict Logic:
     // If LLM says "Interest" -> Add/Boost interest, REMOVE from dislike (Flip).
     // If LLM says "Dislike" -> Add/Boost dislike, REMOVE from interest (Flip).
+    const boostedThisTurn: string[] = [];
     safeAdjustments.forEach((adj: any) => {
       // Try to match LLM's tag to a tag in the available tags pool
       // This handles cases where LLM returns just emoji (e.g., "🎵") instead of full tag (e.g., "🎶 Music")
       let matchedTag = adj.tag;
       const normAdj = normalizeTag(adj.tag);
+      let isUnmatchedInventedTag = false;
       
       // If the tag doesn't exist in availableTags, try to find a match
       if (!allAvailableTags.includes(adj.tag)) {
@@ -543,12 +650,15 @@ const App: React.FC = () => {
               matchedTag = preferred;
               console.log(`[Tag Matching] Matched "${adj.tag}" to "${matchedTag}" (semantic, from ${semanticMatches.length} options)`);
             } else {
-              console.warn(`[Tag Matching] ⚠️ Could not match "${adj.tag}" to any tag in pool. Using as-is.`);
-              // Still use the original tag - it might be valid but just not in the first 300 tags
+              // If we cannot match to the master tag pool, treat it as invented and SKIP.
+              isUnmatchedInventedTag = true;
+              console.warn(`[Tag Matching] ⚠️ Could not match "${adj.tag}" to any tag in pool. Skipping this adjustment.`);
             }
           }
         }
       }
+
+      if (isUnmatchedInventedTag) return;
       
       const normMatched = normalizeTag(matchedTag);
 
@@ -579,15 +689,21 @@ const App: React.FC = () => {
             console.log(`[Tag Addition] Added new interest: "${matchedTag}" (weight: ${initialWeight})`);
           }
         }
+        if (typeof adj.delta === 'number' && adj.delta > 0) boostedThisTurn.push(matchedTag);
 
       } else if (adj.category === 'dislike') {
         // Topic-level dislikes are gated: only apply if explicit stop words mention topic OR repeated >=3 times.
         // This prevents broad-topic collateral damage (e.g., AI/ML) from a single rant.
+        let topicGateAllowed = true;
+        let topicGateClampedImpact: number | null = null;
         if ((analysis as any)?.dislike_scope === 'topic') {
-          const allowed = shouldApplyTopicDislike(text, matchedTag);
-          if (!allowed) {
-            console.log(`[Topic Gate] Blocking topic dislike for "${matchedTag}" until explicit stop or >=3 repeats`);
-            return;
+          topicGateAllowed = shouldApplyTopicDislike(text, matchedTag);
+          if (!topicGateAllowed) {
+            // User-requested behavior:
+            // - If gate NOT triggered, still apply a mild downrank as a dislike, but clamp magnitude to <= 3.
+            // - Stage1 decides the number; we only cap it.
+            topicGateClampedImpact = Math.min(3, Math.max(1, Math.abs(Number(adj.delta || 0)) || 1));
+            console.log(`[Topic Gate] Clamping topic dislike for "${matchedTag}" to ${topicGateClampedImpact} until explicit stop or >=3 repeats`);
           }
         }
 
@@ -598,20 +714,29 @@ const App: React.FC = () => {
           const hitInContent = post.tags.some(t => normalizeTag(t) === normMatched || normalizeTag(t).includes(normMatched));
           if (hitInContent) {
             console.log(`[Dislike Guardrail] Skipping subject dislike "${matchedTag}" due to dislike_scope=aspect`);
+            // #region agent log
+            try {
+              fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:dislike-guardrail-skip',message:'Skipped subject dislike because dislike_scope=aspect and tag is in target post tags',data:{postId:post?.id||null,matchedTag,dislike_scope:(analysis as any)?.dislike_scope||null,soft_downrank_query:(analysis as any)?.soft_downrank_query||null},timestamp:Date.now(),sessionId:'debug-session',runId:'run3',hypothesisId:'H_aspect_guardrail'})}).catch(()=>{});
+            } catch {}
+            // #endregion
             return; // skip this adjustment
           }
         }
 
         // 1. Remove from interests if it exists there (Flip polarity)
-        const interestIdx = currentInterests.findIndex(i => normalizeTag(i.tag) === normMatched);
-        if (interestIdx >= 0) {
-            // "Move" logic: If it was a strong interest, we don't just delete it,
-            // we actively add it to dislikes with the delta power.
-            currentInterests.splice(interestIdx, 1);
+        // Only flip when the topic gate is truly allowed; if it's a clamped "mild downrank",
+        // keep the interest to avoid overreacting on first mention.
+        if (topicGateAllowed) {
+          const interestIdx = currentInterests.findIndex(i => normalizeTag(i.tag) === normMatched);
+          if (interestIdx >= 0) {
+              // "Move" logic: If it was a strong interest, we don't just delete it,
+              // we actively add it to dislikes with the delta power.
+              currentInterests.splice(interestIdx, 1);
+          }
         }
 
         // 2. Add or Boost in Dislikes (use matchedTag instead of adj.tag)
-        const impact = Math.abs(adj.delta); // Dislike score is always positive magnitude in list
+        const impact = topicGateClampedImpact ?? Math.abs(adj.delta); // Dislike score is always positive magnitude in list
         let existingIdx = currentDislikes.findIndex(d => d.tag === matchedTag);
         if (existingIdx === -1) {
             existingIdx = currentDislikes.findIndex(d => normalizeTag(d.tag) === normMatched);
@@ -630,6 +755,15 @@ const App: React.FC = () => {
         }
       }
     });
+
+    // Record recent boosts so Stage3 doesn't immediately decay newly-relevant tags.
+    if (boostedThisTurn.length > 0) {
+      const uniq = Array.from(new Set(boostedThisTurn)).slice(0, 8);
+      recentlyBoostedTagsRef.current = { tags: uniq, at: Date.now(), historyLen: (newHistory?.length || feedbackHistory.length) };
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:boosted',message:'Recorded recently boosted tags (for Stage3 grace)',data:{boosted:uniq.slice(0,8),historyLen:(newHistory?.length||null)},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'H_stage3'})}).catch(()=>{});
+      // #endregion
+    }
 
     // Cleanup: remove zero or negative weights
     currentInterests = currentInterests.filter(i => i.weight > 0.1);
@@ -650,21 +784,40 @@ const App: React.FC = () => {
     setIsModalOpen(false);
     setSelectedPost(null);
     
-    // Construct intent string for LLM Context in Stage 2
-    let explicitIntentString = `User Feedback: "${text}" | Analysis: ${analysis.user_note}`;
-    if (analysis.explicit_search_query) {
-      explicitIntentString += ` | EXPLICIT SEARCH REQUEST: "${analysis.explicit_search_query}"`;
+    // If user explicitly says they don't want to see this specific post, store as "hard avoid" (LLM sees it in Stage 2 context).
+    const wantsHideThisPost = /(我不想看到|不想看这篇|这篇.*别|这个.*别|别再给我看|不要再给我看|别给我推|别恶心我|stop showing|don't show me|dont show me)/i.test(text);
+    if (wantsHideThisPost) {
+      setHardAvoidPosts(prev => upsertHardAvoidPost(prev, {
+        id: post.id,
+        title: post.title[language] || post.title.en,
+        reason: text,
+        createdAt: Date.now()
+      }));
+      addLog('PROFILE_UPDATE', 'Hard Avoid Added (Post-level)', {
+        post_id: post.id,
+        title: post.title[language] || post.title.en
+      });
     }
-    if (analysis.dislike_scope === 'aspect' && analysis.soft_downrank_query) {
-      explicitIntentString += ` | SOFT_AVOID (aspect): "${analysis.soft_downrank_query}" (strength:${analysis.soft_downrank_strength || 1})`;
-    }
+
+    const explicitIntentString = buildStage2Context({
+      source: 'user_feedback',
+      feedbackText: text,
+      analysisNote: analysis.user_note,
+      explicitSearchQuery: normalizedSearchQuery,
+      softAvoidQuery: (analysis.dislike_scope === 'aspect' ? analysis.soft_downrank_query : null) || null,
+      softAvoidStrength: analysis.soft_downrank_strength || 1,
+      history: newHistory,
+      // persona might be one-round behind; that's fine for first pass
+      personaSignals: userPersonaRef.current,
+      hardAvoid: hardAvoidPostsRef.current
+    });
     
       // 3. Trigger Refresh Sequence (Stage 1.5 Hybrid -> Stage 2 LLM)
       triggerRefreshSequence(
         updatedProfile, 
         explicitIntentString, 
         newHistory,
-        analysis.explicit_search_query, // Pass the raw search query for Stage 1.5
+        normalizedSearchQuery, // Pass a bilingual query for Stage 1.5 (deterministic search)
         newlyAddedSoftRule
       );
       
@@ -784,19 +937,10 @@ const App: React.FC = () => {
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
       .slice(0, MAX_SOFT_DOWNRANK_RULES + 5); // allow persona keywords to coexist with recent aspect rules
 
-    // Hard block: if a rule targets an exact post id (user complained about a specific post),
-    // remove it from the candidate pool so Stage 2 cannot "resurrect" it near the top.
-    const blockedPostIds = new Set<string>(
-      rulesToUse
-        .map(r => r.targetPostId)
-        .filter((x): x is string => typeof x === 'string' && x.length > 0)
-    );
-    
     // B. STAGE 1.5: Hybrid Retrieval (Algo + Search)
     // If rawSearchQuery exists, this returns a mix of Top 15 Interest + Top 10 Search.
     // If not, it returns Top 25 Interest.
-    const hybridCandidatesBase = getHybridFeed(COMBINED_POSTS, profileToUse, rawSearchQuery)
-      .filter(p => !blockedPostIds.has(p.id));
+    const hybridCandidatesBase = getHybridFeed(COMBINED_POSTS, profileToUse, rawSearchQuery);
     const hybridCandidates = applySoftDownrank(hybridCandidatesBase, rulesToUse);
     
     // For immediate display (while Stage 2 loads), we just use the Hybrid result.
@@ -817,13 +961,21 @@ const App: React.FC = () => {
     // C. Kickoff Stage 2 (Background LLM Rerank)
     setIsStage2Loading(true);
     const stage2StartTime = Date.now();
+
+    // #region agent log
+    try {
+      const personaKw = userPersonaRef.current?.redFlagKeywords || [];
+      const ent = (entityDislikesRef.current || []).slice(0, 5).map(x => x.value);
+      const asp = (aspectDislikesRef.current || []).slice(0, 5).map(x => x.value);
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:triggerRefreshSequence:pre-stage2',message:'Stage2 starting (context snapshot)',data:{source:options?.source||'unknown',runId:options?.runId||null,rawSearchQuery:rawSearchQuery||null,explicitIntentLen:(explicitIntentString||'').length,personaRedFlagKeywords:personaKw.slice(0,5),entityDislikes:ent,aspectDislikes:asp,hardAvoidCount:(hardAvoidPostsRef.current||[]).length,candidateCount:hybridCandidates.length},timestamp:Date.now(),sessionId:'debug-session',runId:options?.runId||'run1',hypothesisId:'H2'})}).catch(()=>{});
+    } catch {}
+    // #endregion
       
     // The hybridCandidates IS the pool for Stage 2.
     // We pass the "rest of feed" just in case, though usually we just append it.
     // Actually, to keep the feed deep, let's append the *rest* of the algo-sorted posts 
     // that weren't in the top 25 candidate pool.
-    const allAlgoSortedBase = rankPosts(COMBINED_POSTS, profileToUse)
-      .filter(p => !blockedPostIds.has(p.id));
+    const allAlgoSortedBase = rankPosts(COMBINED_POSTS, profileToUse);
     const allAlgoSorted = applySoftDownrank(allAlgoSortedBase, rulesToUse)
       .sort((a, b) => (b.score || 0) - (a.score || 0));
     const candidateIds = new Set(hybridCandidates.map(p => p.id));
@@ -843,6 +995,24 @@ const App: React.FC = () => {
       explicitIntentString
     );
 
+    // #region agent log
+    try {
+      const ctx = (explicitIntentString || '');
+      const top10 = (orderedIds || []).slice(0, 10);
+      const personaKw = (userPersonaRef.current?.redFlagKeywords || []).slice(0, 10).map(s => String(s || '').toLowerCase()).filter(Boolean);
+      const ent = (entityDislikesRef.current || []).slice(0, 10).map(x => String(x.value || '').toLowerCase()).filter(Boolean);
+      const offenders: Array<{ id: string; hit: string }> = [];
+      for (const id of top10) {
+        const p = hybridCandidates.find(x => x.id === id);
+        if (!p) continue;
+        const text = `${p.title.en} ${p.title.zh} ${p.content?.en || ''} ${p.content?.zh || ''} ${(p.tags||[]).join(' ')}`.toLowerCase();
+        const hit = personaKw.find(k => k.length >= 2 && text.includes(k)) || ent.find(k => k.length >= 2 && text.includes(k)) || null;
+        if (hit) offenders.push({ id, hit });
+      }
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:triggerRefreshSequence:post-stage2',message:'Stage2 returned ordering (top10 redflag scan)',data:{source:options?.source||'unknown',runId:options?.runId||null,rawSearchQuery:rawSearchQuery||null,explicitContextHasAdele:/Adele/i.test(ctx),top10,top10RedflagHits:offenders,orderedLen:(orderedIds||[]).length},timestamp:Date.now(),sessionId:'debug-session',runId:options?.runId||'run1',hypothesisId:'H1'})}).catch(()=>{});
+    } catch {}
+    // #endregion
+
     // If this rerank was started as a persona-refine run, ignore stale results.
     if (options?.runId && options.runId !== personaRefineRunIdRef.current) {
       addLog('RE_RANK', 'Stage 2 Result Ignored (Stale Refine Run)', {
@@ -854,13 +1024,78 @@ const App: React.FC = () => {
       return;
     }
     
+    // Enforce a soft-but-reliable guardrail: if we have enough safe candidates,
+    // do not allow redflag/entity/hard-avoid hits into the first N results.
+    const enforceRedflagTopN = (ids: any[], candidates: Post[], contextStr: string, topN: number) => {
+      try {
+        const parsed = JSON.parse(contextStr || '{}');
+        const personaKwRaw: any[] = parsed?.PERSONA_SIGNALS?.red_flag_keywords || parsed?.persona_signals?.red_flag_keywords || [];
+        const entityRaw: any[] = parsed?.ENTITY_DISLIKES || parsed?.entity_dislikes || [];
+        const hardAvoidRaw: any[] = parsed?.HARD_AVOID_POST_IDS || parsed?.hard_avoid_post_ids || [];
+
+        const hardAvoidIds = hardAvoidRaw.map(x => String(x?.id ?? x)).filter(Boolean);
+        const keywords = [
+          ...personaKwRaw.map(x => String(x || '').trim()),
+          ...entityRaw.map(x => String((x && (x.value ?? x)) || '').trim())
+        ]
+          .filter(s => s.length >= 2)
+          .map(s => s.toLowerCase());
+
+        if (hardAvoidIds.length === 0 && keywords.length === 0) return { ids, moved: [] as Array<{ id: string; hit: string }> };
+
+        const idList = (ids || []).map(x => String(x));
+        const topSlice = idList.slice(0, topN);
+        const hitInfo: Record<string, string> = {};
+
+        const isBad = (id: string): boolean => {
+          if (hardAvoidIds.includes(id)) { hitInfo[id] = 'hard_avoid_id'; return true; }
+          const p = candidates.find(x => String(x.id) === id);
+          if (!p) return false;
+          const text = `${p.title.en} ${p.title.zh} ${p.content?.en || ''} ${p.content?.zh || ''} ${(p.tags || []).join(' ')}`.toLowerCase();
+          const hit = keywords.find(k => text.includes(k));
+          if (hit) { hitInfo[id] = hit; return true; }
+          return false;
+        };
+
+        const safe: string[] = [];
+        const bad: string[] = [];
+        for (const id of idList) {
+          if (isBad(id)) bad.push(id);
+          else safe.push(id);
+        }
+
+        // If we can't fill TopN with safe items, keep original ordering (soft constraint cannot be satisfied).
+        if (safe.length < topN) return { ids, moved: [] as Array<{ id: string; hit: string }> };
+
+        // Build: safe TopN, then all bad, then remaining safe
+        const nextIds = [...safe.slice(0, topN), ...bad, ...safe.slice(topN)];
+        const moved = topSlice
+          .filter(id => bad.includes(id))
+          .map(id => ({ id, hit: hitInfo[id] || 'keyword' }));
+        return { ids: nextIds, moved };
+      } catch {
+        return { ids, moved: [] as Array<{ id: string; hit: string }> };
+      }
+    };
+
+    const guard = enforceRedflagTopN(orderedIds as any[], hybridCandidates, explicitIntentString || '{}', 10);
+    const guardedIds = guard.ids;
+
+    // #region agent log
+    try {
+      const beforeTop10 = (orderedIds || []).slice(0, 10).map(x => String(x));
+      const afterTop10 = (guardedIds || []).slice(0, 10).map(x => String(x));
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:triggerRefreshSequence:guardrail',message:'Applied Top10 redflag guardrail (post-LLM)',data:{source:options?.source||'unknown',runId:options?.runId||null,movedCount:guard.moved.length,moved:guard.moved.slice(0,5),beforeTop10,afterTop10},timestamp:Date.now(),sessionId:'debug-session',runId:options?.runId||'run1',hypothesisId:'H_fix'})}).catch(()=>{});
+    } catch {}
+    // #endregion
+
     const reorderedTopPosts: Post[] = [];
     const usedIds = new Set<string>();
-    orderedIds.forEach(id => {
-      const p = hybridCandidates.find(post => post.id === id);
+    guardedIds.forEach((id: any) => {
+      const p = hybridCandidates.find(post => String(post.id) === String(id));
       if (p && !usedIds.has(p.id)) { // Additional deduplication check
         reorderedTopPosts.push(p);
-        usedIds.add(id);
+        usedIds.add(p.id);
       }
     });
     // Add any stragglers from candidates that LLM might have skipped (fallback)
@@ -958,9 +1193,20 @@ const App: React.FC = () => {
       // Trigger refine Stage 2 immediately after signals are available
       const refineRunId = `persona_refine_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       personaRefineRunIdRef.current = refineRunId;
+      const refineIntentString = buildStage2Context({
+        source: 'persona_refine',
+        history,
+        explicitSearchQuery: lastExplicitSearchRef.current?.query || null,
+        personaSignals: {
+          userTraits: signals.userTraits,
+          redFlags: signals.redFlags,
+          redFlagKeywords: signals.redFlagKeywords
+        },
+        hardAvoid: hardAvoidPostsRef.current
+      });
       triggerRefreshSequence(
         currentProfile,
-        undefined,
+        refineIntentString,
         history,
         undefined,
         null,

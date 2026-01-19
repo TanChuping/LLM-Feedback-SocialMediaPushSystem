@@ -33,40 +33,80 @@ The emphasis is on engineering clarity, not model sophistication.
 
 The system runs entirely client-side to demonstrate immediate responsiveness and to keep the feedback loop easy to inspect.
 
-**Workflow:**
+### System Pipeline (Linear)
 
-1.  **Cold Start (Randomization):**
-    *   On load, a random User Profile (2-5 tags, low weights) is generated.
-    *   The Feed is completely shuffled to ensure diversity and break echo chambers immediately.
+```mermaid
+flowchart TD
+  ColdStart[ColdStart:RandomProfile+ShuffleFeed] --> Feedback[UserFeedback:NLG+TargetPost]
+  Feedback --> Stage1[Stage1:LLM_IntentAnalysis]
+  Stage1 --> ProfileUpdate[ProfileUpdate:ApplyAdjustments+Gates]
+  ProfileUpdate --> Stage15[Stage1.5:HybridRetrieval]
+  Stage15 --> Stage2[Stage2:LLM_Rerank]
+  Stage2 --> ApplyGuard[ApplyGuard:Top10RedflagGuardrail]
+  ApplyGuard --> UIApply[UI:ApplyOrPending]
+  UIApply --> Stage3[Stage3:LLM_ProfileCleanup]
+  UIApply --> Stage4a[Stage4a:FastPersonaSignals]
+  Stage4a --> Stage2Refine[Stage2Refine:RerankWithSignals+Banner]
+  UIApply --> Stage4b[Stage4b:Nickname+Description+EmojiFusion]
+```
 
-2.  **User Feedback:**
-    *   User clicks "..." on a post and provides natural language feedback (e.g., "I want to see hiking trails, not tech news").
+**Workflow (step-by-step):**
 
-3.  **Stage 1: Intent Analysis (LLM):**
-    *   The LLM parses the feedback.
-    *   It outputs **Tag Adjustments** (Weights +/-) and checks for **Explicit Search Intent** (e.g., "hiking").
-    *   It also emits **Preference Targets** (entity/aspect/topic) so “I hate DeepSeek hype” can downrank that entity/angle without automatically nuking the umbrella topic (e.g., AI).
+1. **Cold Start (Randomization)**
+   - On load, a random User Profile is generated (few low-weight tags).
+   - The feed is shuffled for diversity.
 
-4.  **Stage 1.5: Hybrid Retrieval (The "Injection" Layer):**
-    *   **If no search intent:** The system ranks posts by Tag Weights (Algo), picks Top 20, and ensures Top 3 interest tags have representation in the candidate pool (up to 25 posts total).
-    *   **If search intent exists:**
-        *   **Pool A:** Top 15 posts based on Interest Profile (Algo).
-        *   **Pool B:** Top 10 posts based on a *Deterministic Keyword Search* (Dead Algo).
-        *   These lists are merged to ensure the user's specific request is honored without losing general personalization.
-    *   **Aspect-level downrank (deterministic):** Before Stage 2 runs, Stage 1.5 can already push down posts that match stored red flags (e.g. `red_flag_keywords`) or Stage 1 preference targets (entity/aspect), without changing the umbrella topic tags.
-        *   In practice, the red flags used here are typically the **durable summary from the previous Stage 4 persona update** (so it can be “one round behind”), combined with any immediate per-feedback targets from Stage 1.
+2. **User Feedback**
+   - User clicks "..." and submits natural-language feedback on a target post.
 
-5.  **Stage 2: Contextual Reranking (LLM):**
-    *   The merged candidate list (from Stage 1.5) is sent to the LLM.
-    *   The LLM reorders the candidate posts, prioritizing the user's immediate request while weaving in general interests.
+3. **Stage 1: Intent Analysis (LLM)**
+   - Produces structured outputs:
+     - **tag adjustments** (interest/dislike deltas on tags in the master vocabulary)
+     - **explicit_search_query** (optional; bilingual tokens encouraged)
+     - **dislike_scope**: `topic` vs `aspect`
+     - **soft_downrank_query** (optional; aspect-level downrank phrase)
+     - **preference_targets**: explicit targets (`entity` / `aspect` / `topic`)
 
-6.  **Stage 3: Memory Cleanup (Background):**
-    *   A background process periodically asks the LLM to review the User's Feedback History.
-    *   It identifies contradictions (e.g., User liked "Gaming" yesterday but hates it today) and decays old tags to keep the profile fresh.
+4. **Profile Update (Deterministic, with guardrails)**
+   - Applies Stage 1 adjustments into the User Profile (interests/dislikes), but with two key safeguards:
+     - **Topic-dislike gate (anti over-correction)**:
+       - If `dislike_scope="topic"` and the user did NOT clearly say “stop showing” (or it’s not repeated enough), we still apply a **mild** dislike but clamp magnitude to **≤ 3**.
+       - If the gate is triggered (explicit stop or repeated negatives), we apply Stage 1’s full magnitude (can be large).
+     - **Aspect guardrail (avoid collateral damage)**:
+       - If `dislike_scope="aspect"`, we avoid converting the target post’s SUBJECT tag into a persistent profile dislike.
+       - Instead, we rely on **soft downrank rules** (e.g., `soft_downrank_query="nerd"`) + Stage 2 semantics.
+       - This is why you might see a Stage 1 “dislike adjustment” in logs, but not see it show up in **Negative Filters**.
 
-7.  **Stage 4: User Persona & Avatar (Background):**
-    *   Generates a neutral, empathetic persona blurb from feedback history (no roasting).
-    *   Creates a playful emoji fusion avatar that reflects interests (e.g., food/tech) using Google Emoji Kitchen, while avoiding offensive combinations.
+5. **Stage 1.5: Hybrid Retrieval (Candidate Pool)**
+   - Builds the candidate list that Stage 2 will reorder:
+     - **No explicit search**: profile-scored top candidates
+     - **With explicit search**: merge **Pool A (profile top)** + **Pool B (deterministic keyword search)**
+   - Applies deterministic **soft downrank** before Stage 2:
+     - recent per-feedback aspect rules
+     - Stage4 `red_flag_keywords`
+     - entity/aspect dislikes (stable exceptions)
+
+6. **Stage 2: LLM Rerank (with rich context)**
+   - Reorders candidates using:
+     - current profile, recent feedback history
+     - persona signals (`user_traits`, `red_flags`, `red_flag_keywords`)
+     - stable exceptions (`ENTITY_DISLIKES`, `ASPECT_DISLIKES`)
+     - primary/secondary tags per post (so “Nightlife is primary, Music is secondary” is explicit)
+
+7. **Top10 Redflag Guardrail (Post-LLM, deterministic)**
+   - After Stage 2 returns IDs, a small deterministic pass enforces:
+     - items matching `HARD_AVOID_POST_IDS`, `ENTITY_DISLIKES`, or `red_flag_keywords` must not appear in **Top 10** (if enough safe candidates exist).
+   - This prevents “LLM didn’t follow instructions” regressions while keeping the rest of the list LLM-driven.
+
+8. **Stage 3: Forgetting / Cleanup (Background)**
+   - Asks an LLM to propose small negative deltas to decay irrelevant tags.
+   - Updated behavior:
+     - **No forced decay**: if nothing is clearly irrelevant, it can output empty decay.
+     - **Grace period**: tags that were **just boosted** are passed as `RECENTLY_BOOSTED_TAGS` and should not be immediately decayed.
+
+9. **Stage 4: Persona (Background, split)**
+   - **Stage 4a (fast)**: emits `user_traits`, `red_flags`, `red_flag_keywords` → immediately triggers a refined Stage 2 rerank + UI banner.
+   - **Stage 4b (slow UI)**: nickname/description/emoji fusion updates the UI only (no further rerank).
 
 **Note (Nuance without collateral damage):**
 - When feedback criticizes an *aspect* (framing/bias/conduct) rather than the *topic* itself, the system stores **downrank-only red flags** so the deterministic ranker pushes down matching posts **without killing the topic tag**.
