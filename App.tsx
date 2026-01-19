@@ -5,7 +5,7 @@ import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2';
 import { ADDITIONAL_POSTS_3, PET_AND_ENT_TAGS } from './constants3'; 
 import { ADDITIONAL_POSTS_4 } from './constants4';
 import { rankPosts, normalizeTag, generateRandomProfile, getHybridFeed } from './services/recommendationEngine';
-import { analyzeFeedback, rerankFeed, pruneUserProfile, generateUserPersonaDescription, generateEmojiFusion, generateUserNickname } from './services/geminiService';
+import { analyzeFeedback, rerankFeed, pruneUserProfile, generateUserPersonaSignals, generateUserPersonaDescription, generateEmojiFusion, generateUserNickname } from './services/geminiService';
 import { PostCard } from './components/PostCard';
 import { FeedbackModal } from './components/FeedbackModal';
 import { Dashboard } from './components/Dashboard';
@@ -120,6 +120,10 @@ const App: React.FC = () => {
   const [isStage1Refreshing, setIsStage1Refreshing] = useState(false); // Short blocker for Algo
   const [isStage2Loading, setIsStage2Loading] = useState(false); // Background LLM
   const [pendingSmartFeed, setPendingSmartFeed] = useState<{posts: Post[], history: string[], profile: UserProfile} | null>(null); // Store LLM result waiting for user
+  const personaRefineRunIdRef = useRef<string | null>(null);
+  const refineBannerTimeoutRef = useRef<number | null>(null);
+  const [refineBannerMessage, setRefineBannerMessage] = useState<string | null>(null);
+  const lastCleanupKeyRef = useRef<string | null>(null);
   
   // Mobile Dashboard
   const [isMobileDashboardOpen, setIsMobileDashboardOpen] = useState(false);
@@ -148,6 +152,16 @@ const App: React.FC = () => {
     window.addEventListener('emojiFusionError', handleEmojiFusionError);
     return () => {
       window.removeEventListener('emojiFusionError', handleEmojiFusionError);
+    };
+  }, []);
+
+  // Cleanup banner timer
+  useEffect(() => {
+    return () => {
+      if (refineBannerTimeoutRef.current) {
+        window.clearTimeout(refineBannerTimeoutRef.current);
+        refineBannerTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -324,6 +338,11 @@ const App: React.FC = () => {
   const triggerBackgroundCleanup = async (currentProfile: UserProfile, history: string[]) => {
     // If no history, nothing to forget
     if (history.length === 0) return;
+    // Guard: avoid running cleanup twice for the same history snapshot (can happen with multiple Stage2 passes)
+    const last = history[history.length - 1] || '';
+    const cleanupKey = `${history.length}:${last}`;
+    if (lastCleanupKeyRef.current === cleanupKey) return;
+    lastCleanupKeyRef.current = cleanupKey;
 
     console.log(`[Stage 3] Starting cleanup with ${history.length} feedbacks, ${currentProfile.interests.length} tags`);
     // Pass the entire feedback history to finding conflicts
@@ -709,7 +728,8 @@ const App: React.FC = () => {
     explicitIntentString?: string, 
     currentHistory?: string[],
     rawSearchQuery?: string | null,
-    newlyAddedSoftRule?: SoftDownrankRule | null
+    newlyAddedSoftRule?: SoftDownrankRule | null,
+    options?: { source?: 'user_feedback' | 'persona_refine' | string; forceAutoApply?: boolean; suppressStage3?: boolean; runId?: string }
   ) => {
     // A. Visual Feedback
     setIsStage1Refreshing(true); 
@@ -763,11 +783,20 @@ const App: React.FC = () => {
       // prefer newest (stage1) over persona defaults when trimming
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
       .slice(0, MAX_SOFT_DOWNRANK_RULES + 5); // allow persona keywords to coexist with recent aspect rules
+
+    // Hard block: if a rule targets an exact post id (user complained about a specific post),
+    // remove it from the candidate pool so Stage 2 cannot "resurrect" it near the top.
+    const blockedPostIds = new Set<string>(
+      rulesToUse
+        .map(r => r.targetPostId)
+        .filter((x): x is string => typeof x === 'string' && x.length > 0)
+    );
     
     // B. STAGE 1.5: Hybrid Retrieval (Algo + Search)
     // If rawSearchQuery exists, this returns a mix of Top 15 Interest + Top 10 Search.
     // If not, it returns Top 25 Interest.
-    const hybridCandidatesBase = getHybridFeed(COMBINED_POSTS, profileToUse, rawSearchQuery);
+    const hybridCandidatesBase = getHybridFeed(COMBINED_POSTS, profileToUse, rawSearchQuery)
+      .filter(p => !blockedPostIds.has(p.id));
     const hybridCandidates = applySoftDownrank(hybridCandidatesBase, rulesToUse);
     
     // For immediate display (while Stage 2 loads), we just use the Hybrid result.
@@ -793,7 +822,8 @@ const App: React.FC = () => {
     // We pass the "rest of feed" just in case, though usually we just append it.
     // Actually, to keep the feed deep, let's append the *rest* of the algo-sorted posts 
     // that weren't in the top 25 candidate pool.
-    const allAlgoSortedBase = rankPosts(COMBINED_POSTS, profileToUse);
+    const allAlgoSortedBase = rankPosts(COMBINED_POSTS, profileToUse)
+      .filter(p => !blockedPostIds.has(p.id));
     const allAlgoSorted = applySoftDownrank(allAlgoSortedBase, rulesToUse)
       .sort((a, b) => (b.score || 0) - (a.score || 0));
     const candidateIds = new Set(hybridCandidates.map(p => p.id));
@@ -812,6 +842,17 @@ const App: React.FC = () => {
       language, 
       explicitIntentString
     );
+
+    // If this rerank was started as a persona-refine run, ignore stale results.
+    if (options?.runId && options.runId !== personaRefineRunIdRef.current) {
+      addLog('RE_RANK', 'Stage 2 Result Ignored (Stale Refine Run)', {
+        source: options.source,
+        runId: options.runId,
+        currentRunId: personaRefineRunIdRef.current
+      });
+      setIsStage2Loading(false);
+      return;
+    }
     
     const reorderedTopPosts: Post[] = [];
     const usedIds = new Set<string>();
@@ -842,15 +883,21 @@ const App: React.FC = () => {
     const stage2Duration = Date.now() - stage2StartTime;
     setIsStage2Loading(false); 
 
-    // AUTO-APPLY LOGIC: If fast (< 3000ms), apply immediately. Otherwise wait for user.
-    if (stage2Duration < 3000) {
+    // AUTO-APPLY LOGIC:
+    // - persona_refine: always auto-apply (per UX)
+    // - default: auto-apply if fast (< 3000ms), otherwise wait for user
+    const shouldForceAutoApply = !!options?.forceAutoApply;
+    if (shouldForceAutoApply || stage2Duration < 3000) {
       setAllRankedPosts(finalSmartFeed);
       setCurrentPage(1);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       
-      addLog('RE_RANK', `Stage 2 Auto-Applied (Fast: ${stage2Duration}ms)`, { 
+      addLog('RE_RANK', shouldForceAutoApply
+        ? `Stage 2 Auto-Applied (Refine: ${stage2Duration}ms)`
+        : `Stage 2 Auto-Applied (Fast: ${stage2Duration}ms)`, {
         top_post: finalSmartFeed[0].title.en
       });
+      setPendingSmartFeed(null);
     } else {
       // D. Store result in PENDING state
       setPendingSmartFeed({
@@ -865,12 +912,17 @@ const App: React.FC = () => {
     }
 
     // TRIGGER STAGE 3 (Forgetting) SECRETLY HERE
-    // It runs in background after Stage 2 analysis is done
-    triggerBackgroundCleanup(profileToUse, currentHistory || feedbackHistory);
+    // It runs in background after Stage 2 analysis is done.
+    // For persona-refine rerank, suppress double-running cleanup.
+    if (!options?.suppressStage3) {
+      triggerBackgroundCleanup(profileToUse, currentHistory || feedbackHistory);
+    }
   };
 
   // --- STAGE 4: USER PERSONA UPDATE (Background, Non-blocking) ---
-  // 分为三条线：名字、描述和 emoji 融合
+  // Split into:
+  // - Stage4a: fast signals (traits/redFlagKeywords) -> triggers refine Stage2
+  // - Stage4b: UI (nickname/long description/emoji fusion) -> no refine rerank
   const updateUserPersona = async (currentProfile: UserProfile, history: string[]) => {
     try {
       console.log(`[App] 🎭 Starting Stage 4 update with ${history.length} feedback items`);
@@ -886,7 +938,41 @@ const App: React.FC = () => {
         });
         return;
       }
+
+      // --- Stage 4a: fast persona signals for refine rerank ---
+      const signals = await generateUserPersonaSignals(history, apiKey);
+      setUserPersona(prev => ({
+        ...prev,
+        userTraits: signals.userTraits,
+        redFlags: signals.redFlags,
+        redFlagKeywords: signals.redFlagKeywords
+      }));
+
+      addLog('PROFILE_UPDATE', 'User Persona Signals Updated (Stage 4a)', {
+        user_traits: signals.userTraits,
+        red_flags: signals.redFlags,
+        red_flag_keywords: signals.redFlagKeywords,
+        history_length: history.length
+      });
+
+      // Trigger refine Stage 2 immediately after signals are available
+      const refineRunId = `persona_refine_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      personaRefineRunIdRef.current = refineRunId;
+      triggerRefreshSequence(
+        currentProfile,
+        undefined,
+        history,
+        undefined,
+        null,
+        { source: 'persona_refine', forceAutoApply: true, suppressStage3: true, runId: refineRunId }
+      );
+
+      // Banner UX (4s)
+      setRefineBannerMessage('已为你细化排序');
+      if (refineBannerTimeoutRef.current) window.clearTimeout(refineBannerTimeoutRef.current);
+      refineBannerTimeoutRef.current = window.setTimeout(() => setRefineBannerMessage(null), 4000);
       
+      // --- Stage 4b: slow UI updates (no second refine rerank) ---
       // 线1：生成用户昵称（嘲讽的）
       const nicknameResult = await generateUserNickname(
         history,
@@ -925,11 +1011,13 @@ const App: React.FC = () => {
       // 更新状态（强制更新，即使看起来相同）
       // 使用函数式更新确保状态正确更新
       setUserPersona(prev => ({
+        ...prev,
         description: descriptionResult.description,
         emojiFusion: emojiResult.emojiFusion,
-        userTraits: descriptionResult.userTraits,
-        redFlags: descriptionResult.redFlags,
-        redFlagKeywords: descriptionResult.redFlagKeywords
+        // Keep latest signals in state (do NOT trigger another refine rerank)
+        userTraits: (descriptionResult.userTraits && descriptionResult.userTraits.length > 0) ? descriptionResult.userTraits : prev.userTraits,
+        redFlags: (descriptionResult.redFlags && descriptionResult.redFlags.length > 0) ? descriptionResult.redFlags : prev.redFlags,
+        redFlagKeywords: (descriptionResult.redFlagKeywords && descriptionResult.redFlagKeywords.length > 0) ? descriptionResult.redFlagKeywords : prev.redFlagKeywords
       }));
       
       // 直接使用从 metadata.json 获取的 URL（每次更新）
@@ -997,6 +1085,22 @@ const App: React.FC = () => {
         enabled={enableLiquidGlass}
         backgroundImageUrl="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop"
       />
+
+      {/* Top banner: refine rerank applied */}
+      <AnimatePresence>
+        {refineBannerMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.98 }}
+            transition={{ duration: 0.25 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[90] px-4 py-2 rounded-full shadow-lg border border-white/40 bg-white/85 backdrop-blur-xl flex items-center gap-2"
+          >
+            <Check className="text-green-600" size={16} />
+            <span className="text-sm font-semibold text-gray-900">{refineBannerMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       {/* Onboarding Overlay - Reduced z-index to allow buttons (z-50/z-60) to pop through if parents permit */}
       <AnimatePresence>

@@ -15,7 +15,8 @@ async function callGroqWithRetry(
   messages: any[], 
   tag: string,
   jsonMode: boolean = true,
-  retries: number = 3
+  retries: number = 3,
+  options?: { temperature?: number; maxTokens?: number }
 ): Promise<any> {
   const effectiveKey = apiKey || DEFAULT_KEY;
 
@@ -43,8 +44,8 @@ async function callGroqWithRetry(
         body: JSON.stringify({
           model: GROQ_MODEL,
           messages: messages,
-          temperature: 0.1, 
-          max_tokens: 2048, // 增加到 2048 避免截断
+          temperature: options?.temperature ?? 0.1,
+          max_tokens: options?.maxTokens ?? 2048, // default 2048 avoids truncation for long prompts
           response_format: jsonMode ? { type: "json_object" } : undefined,
         }),
       });
@@ -348,7 +349,14 @@ export const rerankFeed = async (
   
   if (topPosts.length === 0) return { orderedIds: [] };
 
-  const candidates = topPosts.map(p => `ID:${p.id} | Title:${p.title[language]}`).join('\n');
+  const candidates = topPosts
+    .map(p => `ID:${p.id} | Title:${p.title[language]} | Tags:${(p.tags || []).join(', ')}`)
+    .join('\n');
+
+  // Parse deterministic soft-avoid signal (embedded by App.tsx) so Stage 2 can respect it.
+  const avoidMatch = explicitIntent?.match(/SOFT_AVOID \(aspect\):\s*"([^"]+)"\s*\(strength:(\d+)\)/i);
+  const avoidText = (avoidMatch?.[1] || '').trim();
+  const avoidStrength = Math.max(1, Math.min(3, Number(avoidMatch?.[2] || 1)));
   
   const topInterests = userProfile.interests
     .sort((a,b) => b.weight - a.weight)
@@ -361,6 +369,7 @@ export const rerankFeed = async (
     
     USER PROFILE TOP INTERESTS: ${topInterests}
     ${explicitIntent ? `CURRENT USER REQUEST: "${explicitIntent}"` : ''}
+    ${avoidText ? `AVOID_KEYWORDS (aspect-level, downrank only): "${avoidText}" (strength:${avoidStrength})` : ''}
 
     CONTEXT:
     The candidate list provided may be a MIX of:
@@ -370,8 +379,11 @@ export const rerankFeed = async (
     RULES:
     1. If the User Request is specific (e.g. "Show me jobs"), prioritize the posts that match that topic ABOVE general interests.
     2. Ensure the feed flows logically.
-    3. Output strictly a JSON object: { "ids": ["id1", "id2", ...] }.
-    4. Include ALL provided IDs.
+    3. AVOIDANCE (important):
+       - If AVOID_KEYWORDS is present, you MUST push posts whose Title or Tags match the avoid phrase/tokens toward the bottom of the list.
+       - Treat strength 3 as strong: put matching posts in the bottom ~20% unless the explicit request is *to see that topic*.
+    4. Output strictly a JSON object: { "ids": ["id1", "id2", ...] }.
+    5. Include ALL provided IDs.
   `;
 
   try {
@@ -557,6 +569,54 @@ export const generateUserNickname = async (
       nickname: existingNickname || "New Explorer", 
       rawResponse: `Error: ${error.message}`
     };
+  }
+};
+
+// --- STAGE 4a: FAST PERSONA SIGNALS (for Stage 2 refine rerank) ---
+export const generateUserPersonaSignals = async (
+  feedbackHistory: string[],
+  providedKey: string
+): Promise<{ userTraits: string[]; redFlags: string[]; redFlagKeywords: string[]; rawResponse?: any }> => {
+  if (!feedbackHistory || feedbackHistory.length === 0) {
+    return { userTraits: [], redFlags: [], redFlagKeywords: [] };
+  }
+
+  const recent = feedbackHistory.slice(-10).join('\n');
+
+  const systemPrompt = `你是一个“用户反馈画像信号提取器”。只输出可用于推荐排序的结构化信号，不写长文，不写昵称，不写emoji。\n\n输入是用户最近的反馈（可能中英混杂）。\n\n你需要输出三组列表（每组最多5条，越短越好）：\n1) user_traits：稳定偏好/特征（尽量客观、有证据）\n2) red_flags：用户雷点/排斥点（通常是“喜欢X但讨厌Y角度/行为/质量”）\n3) red_flag_keywords：用于确定性匹配的短关键词/短语（最多5条），用来把相似内容在排序中压下去。\n\nred_flag_keywords 规则：\n- 必须短、可命中标题/正文/标签，不写长句\n- 中英文都可以\n- 优先输出“命名实体”的原样字符串（明星/歌手/角色/品牌/学校/公司/人名），例如标题出现的 \"Adele\"、\"DeepSeek\"。\n- 如果是内容质量/角度类，输出常见短语，如“标题党/低质量评测/刻板印象/糊弄小白/不尊重宠物”。\n\n输出JSON（字段必须存在）:\n{\n  \"user_traits\": [\"...\"],\n  \"red_flags\": [\"...\"],\n  \"red_flag_keywords\": [\"...\"]\n}`;
+
+  const userPrompt = `最近反馈（最多10条，按时间从旧到新）：\n${recent}`;
+
+  try {
+    const result = await callGroqWithRetry(
+      providedKey,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      'STAGE4A_PERSONA_SIGNALS',
+      true,
+      2,
+      { temperature: 0.1, maxTokens: 512 }
+    );
+
+    const toStringArray = (v: any): string[] => {
+      if (!Array.isArray(v)) return [];
+      return v
+        .map(x => (typeof x === 'string' ? x.trim() : ''))
+        .filter(Boolean)
+        .slice(0, 5);
+    };
+
+    return {
+      userTraits: toStringArray(result.user_traits),
+      redFlags: toStringArray(result.red_flags),
+      redFlagKeywords: toStringArray(result.red_flag_keywords),
+      rawResponse: result
+    };
+  } catch (error: any) {
+    console.error('[generateUserPersonaSignals] Error', error);
+    return { userTraits: [], redFlags: [], redFlagKeywords: [], rawResponse: `Error: ${error.message}` };
   }
 };
 
