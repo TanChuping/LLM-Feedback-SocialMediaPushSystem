@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { UserProfile, SystemLog, WeightedTag } from '../types';
+import { UserProfile, SystemLog, WeightedTag, UserPersona } from '../types';
 import { Activity, User, Terminal, RefreshCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
@@ -10,7 +10,7 @@ interface DashboardProps {
   onReset: () => void;
   className?: string;
   enableLiquidGlass?: boolean; // 新增：是否启用液态玻璃效果
-  userPersona?: { description: string; emojiFusion: string[] };
+  userPersona?: UserPersona;
   emojiFusionImage?: string | null;
 }
 
@@ -213,6 +213,32 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       {userPersona.description}
                     </p>
                   </div>
+
+                  {/* Traits + Red flags */}
+                  {((userPersona.userTraits && userPersona.userTraits.length > 0) || (userPersona.redFlags && userPersona.redFlags.length > 0)) && (
+                    <div className="mt-3 space-y-2">
+                      {userPersona.userTraits && userPersona.userTraits.length > 0 && (
+                        <div>
+                          <div className="text-[11px] font-bold text-gray-800">Traits</div>
+                          <ul className="mt-1 list-disc pl-5 text-[11px] text-gray-700 space-y-0.5">
+                            {userPersona.userTraits.slice(0, 5).map((t, idx) => (
+                              <li key={`trait-${idx}`}>{t}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {userPersona.redFlags && userPersona.redFlags.length > 0 && (
+                        <div>
+                          <div className="text-[11px] font-bold text-gray-800">Red flags (Downrank-only)</div>
+                          <ul className="mt-1 list-disc pl-5 text-[11px] text-gray-700 space-y-0.5">
+                            {userPersona.redFlags.slice(0, 5).map((rf, idx) => (
+                              <li key={`rf-${idx}`}>{rf}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>

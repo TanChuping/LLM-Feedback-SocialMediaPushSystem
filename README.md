@@ -12,7 +12,7 @@ Most recommendation systems infer user preferences indirectly from clicks, likes
 
 * are ambiguous and noisy,
 * do not capture *why* a user dislikes something,
-* can reinforce incorrect assumptions about user intent.
+* can reinforce incorrect assumptions about user intent (e.g., liking or viewing community college content does **not** mean the user is “poorly performing”; they may be disciplined, cost‑conscious, and planning a transfer).
 
 Large language models make it tempting to let AI directly control recommendations. However, this raises practical concerns around:
 
@@ -22,7 +22,8 @@ Large language models make it tempting to let AI directly control recommendation
 
 This project explores a more conservative design:
 
-> **Use an LLM only as a semantic translator — converting natural-language feedback into structured preference adjustments — while keeping all ranking decisions inside a transparent, rule-based system.**
+> **Use an LLM only as a semantic translator — converting natural-language feedback into structured preference adjustments — while keeping all ranking decisions inside a transparent, rule-based system.**  
+> Users should be able to say “I dislike this angle” without burying an entire topic; nuance is handled in the translation layer, not by suppressing whole subjects.
 
 The emphasis is on engineering clarity, not model sophistication.
 
@@ -44,6 +45,7 @@ The system runs entirely client-side to demonstrate immediate responsiveness and
 3.  **Stage 1: Intent Analysis (LLM):**
     *   The LLM parses the feedback.
     *   It outputs **Tag Adjustments** (Weights +/-) and checks for **Explicit Search Intent** (e.g., "hiking").
+    *   It also emits **Preference Targets** (entity/aspect/topic) so “I hate DeepSeek hype” can downrank that entity/angle without automatically nuking the umbrella topic (e.g., AI).
 
 4.  **Stage 1.5: Hybrid Retrieval (The "Injection" Layer):**
     *   **If no search intent:** The system ranks posts by Tag Weights (Algo), picks Top 20, and ensures Top 3 interest tags have representation in the candidate pool (up to 25 posts total).
@@ -51,18 +53,25 @@ The system runs entirely client-side to demonstrate immediate responsiveness and
         *   **Pool A:** Top 15 posts based on Interest Profile (Algo).
         *   **Pool B:** Top 10 posts based on a *Deterministic Keyword Search* (Dead Algo).
         *   These lists are merged to ensure the user's specific request is honored without losing general personalization.
+    *   **Aspect-level downrank (deterministic):** Before Stage 2 runs, Stage 1.5 can already push down posts that match stored red flags (e.g. `red_flag_keywords`) or Stage 1 preference targets (entity/aspect), without changing the umbrella topic tags.
+        *   In practice, the red flags used here are typically the **durable summary from the previous Stage 4 persona update** (so it can be “one round behind”), combined with any immediate per-feedback targets from Stage 1.
 
 5.  **Stage 2: Contextual Reranking (LLM):**
     *   The merged candidate list (from Stage 1.5) is sent to the LLM.
-    *   The LLM Adjust and reorder the entered posts, prioritizing the user's immediate request while weaving in general interests.
+    *   The LLM reorders the candidate posts, prioritizing the user's immediate request while weaving in general interests.
 
 6.  **Stage 3: Memory Cleanup (Background):**
     *   A background process periodically asks the LLM to review the User's Feedback History.
     *   It identifies contradictions (e.g., User liked "Gaming" yesterday but hates it today) and decays old tags to keep the profile fresh.
 
 7.  **Stage 4: User Persona & Avatar (Background):**
-    *   Generates a textual user profile description based on feedback history.
-    *   Creates a satirical emoji fusion avatar using Google Emoji Kitchen.
+    *   Generates a neutral, empathetic persona blurb from feedback history (no roasting).
+    *   Creates a playful emoji fusion avatar that reflects interests (e.g., food/tech) using Google Emoji Kitchen, while avoiding offensive combinations.
+
+**Note (Nuance without collateral damage):**
+- When feedback criticizes an *aspect* (framing/bias/conduct) rather than the *topic* itself, the system stores **downrank-only red flags** so the deterministic ranker pushes down matching posts **without killing the topic tag**.
+- Stage 4 summarizes durable `red_flags` (human readable) + `red_flag_keywords` (matchable phrases, max 5) so later refreshes can apply consistent aspect-level downranking without extra LLM calls.
+- Topic-level dislikes are intentionally harder to trigger (explicit stop intent or repeated negatives), to reduce umbrella-tag collateral damage.
 
 ---
 

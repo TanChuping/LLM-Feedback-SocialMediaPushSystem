@@ -28,14 +28,8 @@ async function callGroqWithRetry(
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      // Prevent "infinite hang" if the request stalls (common cause of UI stuck at "analyzing").
-      const controller = new AbortController();
-      const timeoutMs = 25000;
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
       const response = await fetch(GROQ_API_URL, {
         method: "POST",
-        signal: controller.signal,
         headers: {
           "Authorization": `Bearer ${effectiveKey}`,
           "Content-Type": "application/json",
@@ -48,7 +42,6 @@ async function callGroqWithRetry(
           response_format: jsonMode ? { type: "json_object" } : undefined,
         }),
       });
-      clearTimeout(timeoutId);
 
       if (response.status === 429) {
         const errorText = await response.text();
@@ -87,10 +80,6 @@ async function callGroqWithRetry(
       return jsonMode ? JSON.parse(content) : content;
 
     } catch (error: any) {
-      // If aborted due to timeout, retry like other transient errors
-      if (error?.name === 'AbortError') {
-        console.warn(`[${tag}] Request timed out. Attempt ${attempt + 1}/${retries}. Retrying...`);
-      }
       if (attempt === retries - 1) {
         console.error(`[${tag}] Groq Call Failed after ${retries} attempts:`, error);
         throw error;
@@ -121,10 +110,7 @@ export const analyzeFeedback = async (
     return {
       adjustments: [],
       user_note: 'Analysis Failed: Tag vocabulary not loaded. Please refresh the page.',
-      explicit_search_query: null,
-      dislike_scope: 'aspect',
-      soft_downrank_query: null,
-      soft_downrank_strength: 1
+      explicit_search_query: null
     };
   }
 
@@ -177,45 +163,12 @@ export const analyzeFeedback = async (
        - If they just say "I like this" or "This sucks", search intent is null.
        - Even if the user says "看看X" or "推荐X" (Chinese), extract "X" as explicit_search_query.
 
-    4. **TOPIC vs FRAMING vs CONDUCT (principle, not patch)**:
-       - First decide: are they attacking the subject, the framing/bias, or the conduct shown?
-       - If they object to framing/bias (“性别歧视的猫帖”, “新闻标题党/偏见”), DO NOT punish the subject tag (cats / community college / topic)。调整到讨论/偏见类标签（"🤝 Discussion", "🧠 Opinions", "📰 News Bias", "🔥 Hot Takes"）。
-       - 如果他们谴责的是**不当行为**（虐待/工具化/不尊重宠物等），不要下砸主题标签；标记为行为问题，可轻微提高“伦理/讨论”类标签，留给后续排序层降权该具体内容。
-       - 若用户同时表达“喜欢该主体”但“讨厌不当行为”（如“喜欢猫但讨厌不负责/虐猫/玩弄”），保持主体为 interest 或不变，不要给 dislike；仅对行为/讨论类小幅调整。
-       - “只在网上看X”表示偏好“观看而非拥有/线下接触”，不等于讨厌该主题；保持兴趣，避免 dislike 主题。
-       - 只有在用户明确“讨厌某主体本身”（explicit “hate cats/dogs/X”）时，才对主体打强烈 dislike。
-       - 若有歧义，宁可小幅调整讨论/伦理标签，也不要对主体给高强度 dislike。
-
-    5. **ENTITY vs CATEGORY (important)**:
-       - If the feedback targets a SPECIFIC entity (artist/celebrity/person/character/brand/school) rather than the whole category:
-         Example: “这个明星我不喜欢/这人唱歌像电锯/辣耳朵” + title contains “Adele”.
-         Then treat it as aspect-level: set dislike_scope="aspect", set soft_downrank_query to that ENTITY NAME (e.g., "Adele"), and DO NOT downweight broad tags like "🎶 Music".
-       - Only set dislike_scope="topic" and downweight broad category tags when the user explicitly rejects the category itself (e.g., “不要再给我看音乐/I hate music”). 
-
-    6. **DISLIKE SCOPE (important)**:
-       - Set dislike_scope = "topic" ONLY when the user dislikes the topic itself (e.g., "I hate cats", "不要再给我看猫").
-       - Set dislike_scope = "aspect" when the user dislikes the *way* it is presented or the *behavior* shown (bias, irresponsibility, clickbait, toxicity, etc.).
-       - If dislike_scope = "aspect", you SHOULD avoid outputting strong 'dislike' adjustments for the subject tag. Instead, use soft_downrank_query to describe what to push down.
-
-    7. **PREFERENCE TARGETS (structure)**:
-       - Output preference_targets (max 3) to explicitly label what the feedback targets:
-         - type="entity": specific product/person/character/brand/school (e.g., "DeepSeek", "Adele", "散兵")
-         - type="aspect": content angle/quality/toxicity/clickbait (e.g., "低质量评测", "标题党", "糊弄小白")
-         - type="topic": broad category only when explicitly rejected (e.g., "AI/ML", "Music")
-       - Use polarity like/dislike and strength 1-3.
-       - For rants like “DeepSeek垃圾 ai比不上gpt”，create entity dislike ("DeepSeek") + aspect dislike ("低质量评测/糊弄小白") and AVOID topic dislike unless explicit stop-words.
-
-    8. **OUTPUT FORMAT**:
+    4. **OUTPUT FORMAT**:
        JSON: { 
          "adjustments": [{ "tag": string, "category": "interest"|"dislike", "delta": number }], 
          "explicit_search_query": string | null,
-         "dislike_scope": "topic" | "aspect",
-         "soft_downrank_query": string | null,
-         "soft_downrank_strength": 1 | 2 | 3,
-          "preference_targets": [{ "type": "entity"|"aspect"|"topic", "value": string, "polarity": "like"|"dislike", "strength": 1|2|3 }],
          "user_note": string 
        }
-       - Do NOT output keys like "primary_driver" or "secondary_contexts". Use ONLY the schema above.
        
        **CRITICAL**: The "tag" field MUST be an EXACT match from the VOCABULARY_SAMPLE above. 
        - DO NOT use just emoji (e.g., "🎵") - use the full tag (e.g., "🎶 Music" or "🎵 Kpop")
@@ -234,14 +187,14 @@ export const analyzeFeedback = async (
        - For money/finance, use "💸 Money" or more specific tags like "💸 Cost of Living", "💸 Money Saving"
        - Always use the FULL tag name from VOCABULARY_SAMPLE, never just emoji or just text
 
-    9. **SCALING**:
+    5. **SCALING**:
        - "I love this": Primary +6, Secondary +2
        - "Show me more": Primary +4
        - "I hate this": Dislike +8 (Strong filter)
        - "Not for me": Dislike +4
        - **MAX DELTA IS 10.**
 
-    10. **EMPTY PROFILE HANDLING**:
+    6. **EMPTY PROFILE HANDLING**:
        - If CURRENT_PROFILE shows empty LIKES, treat this as a fresh start.
        - You MUST output adjustments based on the feedback, even if profile is empty.
        - Do NOT return empty adjustments array just because profile is empty.
@@ -256,21 +209,10 @@ export const analyzeFeedback = async (
     
     USER_FEEDBACK: "${feedbackText}"
     
-    TASK: Output the required JSON object with:
-    - adjustments: [{ tag, category, delta }]
-    - explicit_search_query (or null)
-    - dislike_scope ("topic" or "aspect")
-    - soft_downrank_query (or null)
-    - soft_downrank_strength (1-3)
-    - user_note (string)
-    ${isProfileEmpty ? "Since profile is empty, you MUST add tags based on this feedback." : ""}
+    TASK: Identify Primary Driver, Secondary Contexts, and any Explicit Search Keywords. ${isProfileEmpty ? "Since profile is empty, you MUST add tags based on this feedback." : ""}
   `;
 
   try {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'services/geminiService.ts:analyzeFeedback:pre-call',message:'Stage1 analyzeFeedback starting callGroqWithRetry',data:{feedbackLen:feedbackText?.length||0,contentContextLen:contentContext?.length||0,availableTagsLen:availableTags?.length||0,profileInterestsLen:userProfile?.interests?.length||0,profileDislikesLen:userProfile?.dislikes?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
-
     const result = await callGroqWithRetry(
       providedKey,
       [
@@ -280,59 +222,12 @@ export const analyzeFeedback = async (
       "Analysis"
     );
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'services/geminiService.ts:analyzeFeedback:post-call',message:'Stage1 analyzeFeedback got raw result',data:{resultKeys:Object.keys(result||{}),hasAdjustments:Array.isArray(result?.adjustments),adjustmentsType:typeof result?.adjustments,explicit_search_query:result?.explicit_search_query??null},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
-
-    // Defensive defaults: model might omit new fields; don't let callers crash.
-    const dislike_scope = result?.dislike_scope === 'topic' ? 'topic' : 'aspect';
-    const soft_downrank_query = typeof result?.soft_downrank_query === 'string' ? result.soft_downrank_query : null;
-    const soft_downrank_strength_raw = Number(result?.soft_downrank_strength ?? 1);
-    const soft_downrank_strength = Math.max(1, Math.min(3, soft_downrank_strength_raw || 1));
-
-    const normalizeTargets = (v: any) => {
-      if (!Array.isArray(v)) return [];
-      return v
-        .map((t: any) => {
-          const type = t?.type;
-          const value = typeof t?.value === 'string' ? t.value.trim() : '';
-          const polarity = t?.polarity;
-          const strengthRaw = Number(t?.strength ?? 1);
-          const strength = Math.max(1, Math.min(3, strengthRaw || 1)) as 1 | 2 | 3;
-          if (!value) return null;
-          if (type !== 'entity' && type !== 'aspect' && type !== 'topic') return null;
-          if (polarity !== 'like' && polarity !== 'dislike') return null;
-          return { type, value, polarity, strength };
-        })
-        .filter(Boolean)
-        .slice(0, 3);
-    };
-
-    const normalized = {
-      ...result,
-      // Ensure adjustments is always an array to avoid runtime crashes; log proves whether LLM schema drift is happening.
-      adjustments: Array.isArray(result?.adjustments) ? result.adjustments : [],
-      dislike_scope,
-      soft_downrank_query,
-      soft_downrank_strength,
-      preference_targets: normalizeTargets(result?.preference_targets),
-      rawResponse: result
-    };
-
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'services/geminiService.ts:analyzeFeedback:normalized',message:'Stage1 analyzeFeedback normalized output',data:{normalizedKeys:Object.keys(normalized||{}),adjustmentsIsArray:Array.isArray(normalized.adjustments),adjustmentsLen:normalized.adjustments?.length??null,dislike_scope:normalized.dislike_scope,soft_downrank_query:normalized.soft_downrank_query??null,soft_downrank_strength:normalized.soft_downrank_strength,targetsLen:(normalized.preference_targets||[]).length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
-
-    return normalized;
+    return { ...result, rawResponse: result };
 
   } catch (error: any) {
     return { 
         adjustments: [], 
-        user_note: `Analysis Failed. Error: ${error.message}`,
-        explicit_search_query: null,
-        dislike_scope: 'aspect',
-        soft_downrank_query: null,
-        soft_downrank_strength: 1
+        user_note: `Analysis Failed. Error: ${error.message}` 
     };
   }
 };
@@ -500,18 +395,20 @@ export const generateUserNickname = async (
   const recentHistory = feedbackHistory.slice(-10).join(" | ");
   const existingName = existingNickname || "New Explorer";
 
-  // 简洁的 prompt，生成友好、有趣的用户名字
-  const systemPrompt = `生成友好、有趣的用户昵称（最多3个单词，英文）。基于用户反馈，突出兴趣/风格/心情，避免冒犯。
+  // 简洁的 prompt，生成嘲讽的用户名字
+  const systemPrompt = `生成嘲讽的用户昵称（最多3个单词，英文）。基于用户反馈，用毒舌、搞笑、冒犯的方式。
 
 示例：
-- 爱吃美食 → "ramen explorer", "pizza chaser", "snack seeker"
-- 科技/学习 → "robot tinkerer", "curious coder", "calm learner"
-- 运动/夜生活 → "nightlife mixer", "gym runner", "dance friend"
-- 旅行/探索 → "sunset chaser", "city hopper", "weekend trekker"
+- 爱约会/感情问题 → "dating weeb", "heartbreak hero", "simp master"
+- 程序员/技术宅 → "horny programmer", "code monkey", "debug daddy"
+- 健身/肌肉 → "muscle musician", "gym bro", "protein prince"
+- 好人/老好人 → "Mr.nice guy", "yes man", "people pleaser"
+- 游戏/宅 → "gaming gremlin", "anime addict", "console cowboy"
+- 吃货 → "pizza person", "foodie fool", "snack seeker"
 
 规则：
 1. 最多3个单词，简短有力
-2. 语气轻松、风趣，但保持尊重
+2. 要嘲讽、冒犯、搞笑
 3. 基于用户最新反馈和整体形象
 4. 如果现有名字已经很准确，可以保持或微调
 
@@ -527,7 +424,7 @@ export const generateUserNickname = async (
     
     现有名字：${existingName}
     
-    任务：生成或更新一个友好、有趣但不冒犯的用户昵称，突出兴趣/风格/心情。
+    任务：生成或更新嘲讽的用户昵称。要毒舌、搞笑、冒犯。
   `;
 
   try {
@@ -564,49 +461,23 @@ export const generateUserPersonaDescription = async (
   feedbackHistory: string[],
   providedKey: string,
   existingDescription?: string
-): Promise<{ description: string; userTraits: string[]; redFlags: string[]; redFlagKeywords: string[]; rawResponse?: any }> => {
+): Promise<{ description: string; rawResponse?: any }> => {
   
   if (feedbackHistory.length === 0) {
     return { 
-      description: "新用户，等待更多反馈来描绘画像...",
-      userTraits: [],
-      redFlags: [],
-      redFlagKeywords: []
+      description: "新用户，等待更多反馈来描绘画像..."
     };
   }
 
   const recentHistory = feedbackHistory.slice(-10).join(" | ");
   const existingDesc = existingDescription || "无";
 
-  // Stage 4: 输出画像 + 可用于排序的“雷点/特征”摘要（不额外增加调用，只改变输出结构）
-  const systemPrompt = `生成用户画像描述（200-400字）。只基于反馈文本和帖子内容，不涉及标签/emoji/技术。
+  // 优化后的简洁 prompt（保持功能但减少 token）
+  const systemPrompt = `生成用户画像文字描述（200-400字）。只基于反馈文本和帖子内容，不涉及标签/emoji/技术。
 
-你还需要总结两类列表（每类最多5条）：
-1) user_traits：稳定特征/偏好（尽量客观、有证据）
-2) red_flags：用户“雷点/排斥点”，常见形式是“虽然喜欢X，但讨厌Y类型内容/角度/行为”
+内容：性格特征、生活经历、兴趣爱好、价值观、雷点、当前心理状态。可适度冒犯和幽默，但要基于证据。如有新发现要大胆更新。
 
-同时输出 red_flag_keywords：每条是一个用于确定性匹配的短关键词/短语（最多5条），用于把相似内容在排序中压下去。
-关键词要求：短、可命中标题/正文/标签；不要写长句；可以是中文短语或英文token。
-
-命名实体要求（很重要）：
-- 如果 red_flags 涉及具体对象（明星/歌手/角色/品牌/学校/公司/人名），必须直接写出名字（从帖子标题或反馈里提取）。
-- red_flag_keywords 优先包含该名字的“原样字符串”（例如标题里出现的 "Adele"），这样排序层可以稳定命中标题。
-
-示例（仅示意）：
-- red_flags: ["喜欢猫但讨厌拿猫取乐/不负责的养宠内容"]
-- red_flag_keywords: ["拿猫取乐", "不尊重宠物", "虐待宠物"]
-- red_flags: ["社区大学转学但讨厌低质量速成广告/刻板印象内容"]
-- red_flag_keywords: ["速成托福", "GPA2", "低级广告"]
-- red_flags: ["玩原神但讨厌散兵相关内容"]
-- red_flag_keywords: ["散兵"]
-
-输出JSON（字段必须存在）:
-{
-  "description": "描述文本",
-  "user_traits": ["..."],
-  "red_flags": ["..."],
-  "red_flag_keywords": ["..."]
-}`;
+输出JSON: { "description": "描述文本" }`;
 
   // 限制反馈历史长度，避免 token 过多
   const limitedHistory = recentHistory.length > 1000 
@@ -637,35 +508,21 @@ export const generateUserPersonaDescription = async (
       3,    // retries
     );
 
-    const toStringArray = (v: any): string[] => {
-      if (!Array.isArray(v)) return [];
-      return v
-        .map(x => (typeof x === 'string' ? x.trim() : ''))
-        .filter(s => s.length > 0)
-        .slice(0, 5);
-    };
-
     return {
       description: result.description || existingDescription || "画像生成中...",
-      userTraits: toStringArray(result.user_traits),
-      redFlags: toStringArray(result.red_flags),
-      redFlagKeywords: toStringArray(result.red_flag_keywords),
       rawResponse: result
     };
 
   } catch (error: any) {
     console.error("Persona Description Generation Error", error);
     return { 
-      description: existingDescription || "画像分析失败",
-      userTraits: [],
-      redFlags: [],
-      redFlagKeywords: [],
+      description: existingDescription || "画像分析失败", 
       rawResponse: `Error: ${error.message}`
     };
   }
 };
 
-// --- STAGE 4B: EMOJI FUSION (Playful, Non-offensive) ---
+// --- STAGE 4B: EMOJI FUSION (Roasting/Satirical) ---
 export const generateEmojiFusion = async (
   feedbackHistory: string[],
   providedKey: string
@@ -778,28 +635,29 @@ export const generateEmojiFusion = async (
   const otherEmojis = AVAILABLE_EMOJIS.filter(e => !priorityEmojis.includes(e));
   const mainEmojiCandidates = [...priorityEmojis, ...otherEmojis].slice(0, 200).join(' ');
 
-  // 优化后的 prompt，更明确地强调要根据反馈内容选择（友好、无冒犯）
-  const systemPrompt = `选择一个主 emoji，表达用户当前的兴趣或情绪。从候选列表选一个：${mainEmojiCandidates}
+  // 优化后的 prompt，更明确地强调要根据反馈内容选择
+  const systemPrompt = `选择主emoji来嘲讽用户。从候选列表选一个：${mainEmojiCandidates}
 
 规则映射（根据反馈内容选择）：
-- 食物/想吃/饿了 → 🍕🍔🍟🌮🌯🍗🍜🍣
-- 情绪积极/开心 → 😄😊😍
-- 情绪低落/压力/焦虑 → 😢😰😱
-- 游戏/宅/技术 → 🤓🎮💻🤖
+- 提到食物/想吃/饿了 → 🍕🍔🍟🌮🌯🍗（优先选择食物相关）
+- 肥胖/体重 → 🐷🍕
+- 失恋/舔狗/感情问题 → 🤡💔
+- 焦虑/压力/紧张 → 😰😱😨
+- 宅/游戏/技术 → 🤓🎮💻
 - 社交/派对/聚会 → 🍻💃🎉
-- 理财/预算/省钱 → 💸🪙💰
-- 工作/忙碌 → 💼⏰📊
+- 穷/省钱/经济 → 💸🪙💰
+- 自恋/炫耀 → 🪞👑✨
+- 工作狂/忙碌 → 💼⏰📊
 - 运动/健身 → 🏃💪🏋️
 - 学习/读书 → 📚✏️📖
 - 音乐/艺术 → 🎵🎸🎨
 - 旅行/探索 → ✈️🌍🗺️
-- 宠物/动物 → 🐶🐱🐻🐼
 
 重要：
 1. **仔细阅读用户最新反馈**，根据反馈的具体内容选择最相关的 emoji
-2. 如果反馈提到具体食物或物品，优先选择对应 emoji
-3. 保持多样化，避免总是相同选择
-4. 选择的 emoji 必须在候选列表中，语气轻松友好
+2. 如果反馈提到"想吃披萨"，必须选择 🍕 或相关食物 emoji
+3. 不要总是选相同的 emoji，要根据反馈内容变化
+4. 选择的 emoji 必须在候选列表中
 
 输出JSON: { "mainEmoji": "emoji字符" }`;
 
@@ -814,7 +672,8 @@ export const generateEmojiFusion = async (
     用户反馈历史（最近10条）：
     ${limitedHistory}
     
-    任务：根据最新反馈选择一个主 emoji，轻松、有趣、无冒犯；如反馈提到食物（如"想吃披萨"），优先选食物相关 emoji（🍕🍔等）。
+    任务：根据最新反馈选择一个主 emoji 来嘲讽用户。要毒舌、搞笑、冒犯。
+    特别注意：如果最新反馈提到食物（如"想吃披萨"），必须选择食物相关的 emoji（🍕🍔等）。
   `;
 
   try {
@@ -884,7 +743,7 @@ export const generateEmojiFusion = async (
       : recentHistory;
     
     // 优化后的简洁 prompt，强调多样化和根据最新反馈选择
-    const step2SystemPrompt = `从真实组合里选择一个最契合用户反馈的 emoji 组合，轻松有趣但不冒犯；保持多样化，避免总是相同选择。
+    const step2SystemPrompt = `选择最嘲讽的emoji组合。根据用户最新反馈选择，要多样化，不要总是选相同的组合。
 
 主emoji: ${validMainEmoji}
 组合列表（真实存在，共${limitedCombinationsList.split('\n').length}个选项）：
@@ -901,7 +760,7 @@ ${limitedCombinationsList}
       providedKey,
       [
         { role: "system", content: step2SystemPrompt },
-        { role: "user", content: `用户反馈：${limitedHistory}\n\n选择一个最贴合反馈且不冒犯的组合。` }
+        { role: "user", content: `用户反馈：${limitedHistory}\n\n选择一个最嘲讽的组合。` }
       ],
       "EmojiFusionStep2",
       true,

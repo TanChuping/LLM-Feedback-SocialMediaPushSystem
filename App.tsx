@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Post, UserProfile, SystemLog, WeightedTag } from './types';
+import { Post, UserProfile, SystemLog, WeightedTag, UserPersona } from './types';
 import { INITIAL_USER_PROFILE, MOCK_POSTS, ALL_TAGS } from './constants';
 import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2'; 
 import { ADDITIONAL_POSTS_3, PET_AND_ENT_TAGS } from './constants3'; 
@@ -17,6 +17,22 @@ const ITEMS_PER_PAGE = 30;
 const MAX_TAG_WEIGHT = 40;
 // Increased to 25 to leverage deeper content pool, since Stage 2 is now non-blocking
 const LLM_RERANK_COUNT = 25;
+const MAX_SOFT_DOWNRANK_RULES = 5;
+
+type SoftDownrankRule = {
+  query: string;
+  strength: number; // 1-3
+  createdAt: number;
+  targetPostId?: string; // downrank the exact complained-about post (deterministic)
+};
+
+type NamedAvoid = {
+  value: string;
+  strength: number; // 1-3
+  createdAt: number;
+};
+
+const MAX_NAMED_AVOIDS = 10;
 
 // Merge data sources with ID deduplication (keep first occurrence)
 const allPostsRaw = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3, ...ADDITIONAL_POSTS_4];
@@ -54,12 +70,34 @@ const App: React.FC = () => {
   
   // New: Track history for background cleanup context
   const [feedbackHistory, setFeedbackHistory] = useState<string[]>([]);
+
+  // New: "Aspect-level" avoid rules (do not kill topic tags; downrank matching posts instead)
+  const [softDownrankRules, setSoftDownrankRules] = useState<SoftDownrankRule[]>([]);
+  const softDownrankRulesRef = useRef<SoftDownrankRule[]>([]);
+  useEffect(() => {
+    softDownrankRulesRef.current = softDownrankRules;
+  }, [softDownrankRules]);
+
+  // NEW: entity/aspect dislikes stored separately from topic tag weights
+  const [entityDislikes, setEntityDislikes] = useState<NamedAvoid[]>([]);
+  const [aspectDislikes, setAspectDislikes] = useState<NamedAvoid[]>([]);
+  const entityDislikesRef = useRef<NamedAvoid[]>([]);
+  const aspectDislikesRef = useRef<NamedAvoid[]>([]);
+  useEffect(() => { entityDislikesRef.current = entityDislikes; }, [entityDislikes]);
+  useEffect(() => { aspectDislikesRef.current = aspectDislikes; }, [aspectDislikes]);
   
   // User Persona (Stage 4)
-  const [userPersona, setUserPersona] = useState<{ description: string; emojiFusion: string[] }>({
+  const [userPersona, setUserPersona] = useState<UserPersona>({
     description: "新用户，等待更多反馈来描绘画像...",
-    emojiFusion: ['👤', '🤔']
+    emojiFusion: ['👤', '🤔'],
+    userTraits: [],
+    redFlags: [],
+    redFlagKeywords: []
   });
+  const userPersonaRef = useRef<UserPersona>(userPersona);
+  useEffect(() => {
+    userPersonaRef.current = userPersona;
+  }, [userPersona]);
   const [emojiFusionImage, setEmojiFusionImage] = useState<string | null>(null);
   
   // Pagination
@@ -141,6 +179,99 @@ const App: React.FC = () => {
       details
     };
     setLogs(prev => [...prev, newLog]);
+  };
+
+  const upsertNamedAvoid = (prev: NamedAvoid[], value: string, strength: number): NamedAvoid[] => {
+    const v = (value || '').trim();
+    if (!v) return prev;
+    const now = Date.now();
+    const norm = v.toLowerCase();
+    const next = prev.map(x => ({ ...x }));
+    const idx = next.findIndex(x => x.value.toLowerCase() === norm);
+    if (idx >= 0) {
+      next[idx].strength = Math.max(next[idx].strength, strength);
+      next[idx].createdAt = now;
+    } else {
+      next.unshift({ value: v, strength, createdAt: now });
+    }
+    return next
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, MAX_NAMED_AVOIDS);
+  };
+
+  const shouldApplyTopicDislike = (feedback: string, matchedTag: string): boolean => {
+    const f = (feedback || '').toLowerCase();
+    const stopWords = /(别给我推|不要再|别再|不想看|别给我看|stop showing|don'?t show me)/i.test(f);
+    const topicKey = normalizeTag(matchedTag); // emoji-stripped label
+
+    // History-based: count repeated topic-level negatives (>=3)
+    let counts: Record<string, number> = {};
+    try {
+      counts = JSON.parse(localStorage.getItem('topicNegCounts') || '{}') || {};
+    } catch {}
+    const current = (counts[topicKey] || 0) + 1;
+    counts[topicKey] = current;
+    try { localStorage.setItem('topicNegCounts', JSON.stringify(counts)); } catch {}
+
+    // Explicit stop only counts when they actually mention the topic (avoid false positives like “别给我推这种”)
+    const mentionsTopic = topicKey.length > 0 && f.includes(topicKey);
+    const explicitStop = stopWords && mentionsTopic;
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:shouldApplyTopicDislike',message:'Topic dislike gate decision',data:{topicKey,explicitStop,negCount:current},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H5'})}).catch(()=>{});
+    // #endregion
+
+    return explicitStop || current >= 3;
+  };
+
+  const applySoftDownrank = (posts: Post[], rules: SoftDownrankRule[]): Post[] => {
+    if (!rules || rules.length === 0) return posts;
+
+    return posts.map(p => {
+      const baseScore = p.score ?? 0;
+      const text = `${p.title.en} ${p.title.zh} ${p.tags.join(' ')}`.toLowerCase();
+
+      let penalty = 0;
+      const hitReasons: string[] = [];
+
+      for (const rule of rules) {
+        // Always downrank the exact complained-about post (deterministic, no keyword dependency)
+        if (rule.targetPostId && p.id === rule.targetPostId) {
+          penalty += rule.strength * 40;
+          hitReasons.push('target_post');
+          continue;
+        }
+
+        const q = (rule.query || '').trim().toLowerCase();
+        if (!q) continue;
+
+        // Prefer phrase match; fall back to token hits
+        if (text.includes(q)) {
+          penalty += rule.strength * 8;
+          hitReasons.push(rule.query);
+          continue;
+        }
+
+        // Split on whitespace and common separators to support queries like "虐待/不尊重宠物"
+        const tokens = q.split(/[\s/、，,;；]+/).filter(t => t.length >= 2);
+        if (tokens.length === 0) continue;
+
+        let hits = 0;
+        for (const t of tokens) {
+          if (text.includes(t)) hits += 1;
+        }
+        if (hits > 0) {
+          penalty += rule.strength * 3 * hits;
+          hitReasons.push(rule.query);
+        }
+      }
+
+      if (penalty <= 0) return p;
+
+      const nextScore = parseFloat((baseScore - penalty).toFixed(2));
+      const reason = p.debugReason ? `${p.debugReason} | ⬇️ avoid:${hitReasons[0]}` : `⬇️ avoid:${hitReasons[0]}`;
+      return { ...p, score: nextScore, debugReason: reason };
+    });
   };
 
   useEffect(() => {
@@ -251,41 +382,114 @@ const App: React.FC = () => {
     setIsAnalyzing(true);
     const postTitle = post.title[language];
     
-    // 1. Update History
-    const newHistory = [...feedbackHistory, text];
-    setFeedbackHistory(newHistory);
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:entry',message:'Stage1 submit entered',data:{feedbackLen:text?.length||0,postId:post?.id||null,postTitleLen:postTitle?.length||0,postTagsLen:post?.tags?.length||0,historyLen:feedbackHistory?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
 
-    addLog('FEEDBACK', 'User provided natural language feedback', { feedback: text, target_post: postTitle });
+      // 1. Update History
+      const newHistory = [...feedbackHistory, text];
+      setFeedbackHistory(newHistory);
 
-    // 2. Stage 1 Analysis: Analyze Intent (Add/Boost/Penalize/Move/Search)
-    const analysis = await analyzeFeedback(
-      text, 
-      `Title: ${postTitle}, Tags: ${post.tags.join(', ')}`,
-      userProfile, 
-      apiKey, 
-      allAvailableTags 
-    );
+      addLog('FEEDBACK', 'User provided natural language feedback', { feedback: text, target_post: postTitle });
+
+      // 2. Stage 1 Analysis: Analyze Intent (Add/Boost/Penalize/Move/Search)
+      const analysis = await analyzeFeedback(
+        text, 
+        `Title: ${postTitle}, Tags: ${post.tags.join(', ')}`,
+        userProfile, 
+        apiKey, 
+        allAvailableTags 
+      );
+
+      // Defensive normalization: Groq may occasionally return a different schema.
+      // Never let Stage 1 crash UI due to missing fields.
+      const safeAdjustments = Array.isArray((analysis as any)?.adjustments) ? (analysis as any).adjustments : [];
+      const safeUserNote = typeof (analysis as any)?.user_note === 'string' ? (analysis as any).user_note : '';
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:post-analyze',message:'Stage1 analyzeFeedback returned',data:{analysisKeys:Object.keys(analysis||{}),adjustmentsIsArray:Array.isArray((analysis as any)?.adjustments),adjustmentsLen:Array.isArray((analysis as any)?.adjustments)?(analysis as any).adjustments.length:null,user_note_type:typeof (analysis as any)?.user_note,rawKeys:Object.keys((analysis as any)?.rawResponse||{})},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
     
-    addLog('LLM_ANALYSIS', 'Step 1: Analyzed Intent & Keywords', {
-      raw_response: analysis.rawResponse || "No raw response",
-      explicit_search: analysis.explicit_search_query || "None",
-      note: analysis.user_note,
-      using_key: apiKey ? `Custom Key` : 'Demo Key'
-    });
+      addLog('LLM_ANALYSIS', 'Step 1: Analyzed Intent & Keywords', {
+        raw_response: analysis.rawResponse || "No raw response",
+        explicit_search: analysis.explicit_search_query || "None",
+        dislike_scope: analysis.dislike_scope || "unknown",
+        soft_downrank_query: analysis.soft_downrank_query || null,
+        note: safeUserNote || analysis.user_note,
+        using_key: apiKey ? `Custom Key` : 'Demo Key'
+      });
 
-    if (analysis.adjustments.length === 0 && analysis.user_note.includes("Failed")) {
-        setIsAnalyzing(false);
-        setIsModalOpen(false);
-        return;
-    }
+      // Store explicit preference targets (entity/aspect) separately from topic tags
+      const targets = Array.isArray((analysis as any)?.preference_targets) ? (analysis as any).preference_targets : [];
+      if (targets.length > 0) {
+        const addEntity: Array<{ value: string; strength: number }> = [];
+        const addAspect: Array<{ value: string; strength: number }> = [];
+        for (const t of targets) {
+          if (!t || t.polarity !== 'dislike') continue;
+          const strength = Math.max(1, Math.min(3, Number(t.strength || 1)));
+          if (t.type === 'entity') addEntity.push({ value: String(t.value || '').trim(), strength });
+          if (t.type === 'aspect') addAspect.push({ value: String(t.value || '').trim(), strength });
+        }
+        if (addEntity.length > 0) {
+          setEntityDislikes(prev => addEntity.reduce((acc, it) => upsertNamedAvoid(acc, it.value, it.strength), prev));
+        }
+        if (addAspect.length > 0) {
+          setAspectDislikes(prev => addAspect.reduce((acc, it) => upsertNamedAvoid(acc, it.value, it.strength), prev));
+        }
+
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:targets',message:'Stored preference_targets into entity/aspect lists',data:{targetsCount:targets.length,entities:addEntity.map(x=>x.value).slice(0,3),aspects:addAspect.map(x=>x.value).slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H6'})}).catch(()=>{});
+        // #endregion
+      }
+
+      if (safeAdjustments.length === 0 && safeUserNote.includes("Failed")) {
+          setIsAnalyzing(false);
+          setIsModalOpen(false);
+          return;
+      }
 
     let currentInterests = [...userProfile.interests];
     let currentDislikes = [...userProfile.dislikes];
 
+    // If user dislikes an ASPECT (framing/conduct) rather than the TOPIC,
+    // store a soft downrank rule so ranking can push down matching posts without killing the subject tag.
+    let newlyAddedSoftRule: SoftDownrankRule | null = null;
+    if (analysis.dislike_scope === 'aspect' && analysis.soft_downrank_query) {
+      const q = analysis.soft_downrank_query.trim();
+      if (q.length > 0) {
+        const strength = Math.max(1, Math.min(3, Number(analysis.soft_downrank_strength || 1)));
+        newlyAddedSoftRule = { query: q, strength, createdAt: Date.now(), targetPostId: post.id };
+        setSoftDownrankRules(prev => {
+          const now = Date.now();
+          // Deduplicate by normalized query
+          const normQ = q.toLowerCase();
+          const next = prev.map(r => ({ ...r }));
+          const idx = next.findIndex(r => r.query.toLowerCase() === normQ);
+          if (idx >= 0) {
+            next[idx].strength = Math.max(next[idx].strength, strength);
+            next[idx].createdAt = now;
+          } else {
+            next.unshift({ query: q, strength, createdAt: now });
+          }
+          // Keep most recent N
+          return next
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, MAX_SOFT_DOWNRANK_RULES);
+        });
+
+        addLog('PROFILE_UPDATE', 'Soft Downrank Rule Added (Aspect-level)', {
+          dislike_scope: 'aspect',
+          query: q,
+          strength
+        });
+      }
+    }
+
     // Apply strict Logic:
     // If LLM says "Interest" -> Add/Boost interest, REMOVE from dislike (Flip).
     // If LLM says "Dislike" -> Add/Boost dislike, REMOVE from interest (Flip).
-    analysis.adjustments.forEach(adj => {
+    safeAdjustments.forEach((adj: any) => {
       // Try to match LLM's tag to a tag in the available tags pool
       // This handles cases where LLM returns just emoji (e.g., "🎵") instead of full tag (e.g., "🎶 Music")
       let matchedTag = adj.tag;
@@ -358,6 +562,27 @@ const App: React.FC = () => {
         }
 
       } else if (adj.category === 'dislike') {
+        // Topic-level dislikes are gated: only apply if explicit stop words mention topic OR repeated >=3 times.
+        // This prevents broad-topic collateral damage (e.g., AI/ML) from a single rant.
+        if ((analysis as any)?.dislike_scope === 'topic') {
+          const allowed = shouldApplyTopicDislike(text, matchedTag);
+          if (!allowed) {
+            console.log(`[Topic Gate] Blocking topic dislike for "${matchedTag}" until explicit stop or >=3 repeats`);
+            return;
+          }
+        }
+
+        // Guardrail: if the LLM classified this feedback as "aspect" dislike,
+        // do NOT flip the SUBJECT tag of the current content into profile dislikes.
+        // We want to downrank the problematic *aspect*, not kill the topic.
+        if (analysis.dislike_scope === 'aspect') {
+          const hitInContent = post.tags.some(t => normalizeTag(t) === normMatched || normalizeTag(t).includes(normMatched));
+          if (hitInContent) {
+            console.log(`[Dislike Guardrail] Skipping subject dislike "${matchedTag}" due to dislike_scope=aspect`);
+            return; // skip this adjustment
+          }
+        }
+
         // 1. Remove from interests if it exists there (Flip polarity)
         const interestIdx = currentInterests.findIndex(i => normalizeTag(i.tag) === normMatched);
         if (interestIdx >= 0) {
@@ -399,7 +624,7 @@ const App: React.FC = () => {
     
     setUserProfile(updatedProfile);
     addLog('PROFILE_UPDATE', `Weights Adjusted (Precise)`, { 
-      changes: analysis.adjustments.map(a => `${a.tag} (${a.category === 'dislike' ? '-' : '+'}${Math.abs(a.delta)})`),
+      changes: safeAdjustments.map((a: any) => `${a.tag} (${a.category === 'dislike' ? '-' : '+'}${Math.abs(a.delta)})`),
     });
 
     setIsAnalyzing(false);
@@ -411,17 +636,36 @@ const App: React.FC = () => {
     if (analysis.explicit_search_query) {
       explicitIntentString += ` | EXPLICIT SEARCH REQUEST: "${analysis.explicit_search_query}"`;
     }
+    if (analysis.dislike_scope === 'aspect' && analysis.soft_downrank_query) {
+      explicitIntentString += ` | SOFT_AVOID (aspect): "${analysis.soft_downrank_query}" (strength:${analysis.soft_downrank_strength || 1})`;
+    }
     
-    // 3. Trigger Refresh Sequence (Stage 1.5 Hybrid -> Stage 2 LLM)
-    triggerRefreshSequence(
-      updatedProfile, 
-      explicitIntentString, 
-      newHistory,
-      analysis.explicit_search_query // Pass the raw search query for Stage 1.5
-    );
-    
-    // 4. Trigger User Persona Update (Stage 4) - Background, Non-blocking
-    updateUserPersona(updatedProfile, newHistory);
+      // 3. Trigger Refresh Sequence (Stage 1.5 Hybrid -> Stage 2 LLM)
+      triggerRefreshSequence(
+        updatedProfile, 
+        explicitIntentString, 
+        newHistory,
+        analysis.explicit_search_query, // Pass the raw search query for Stage 1.5
+        newlyAddedSoftRule
+      );
+      
+      // 4. Trigger User Persona Update (Stage 4) - Background, Non-blocking
+      updateUserPersona(updatedProfile, newHistory);
+    } catch (err: any) {
+      console.error('[Stage 1] Unhandled error in handleFeedbackSubmit:', err);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:catch',message:'Stage1 unhandled error',data:{errName:err?.name||null,errMessage:err?.message||String(err),errStack:(err?.stack?String(err.stack).slice(0,400):null)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion
+      addLog('LLM_ANALYSIS', 'Step 1 Failed (Unhandled Error)', {
+        error: err?.message || String(err)
+      });
+      // Ensure UI can recover
+      setIsModalOpen(false);
+    } finally {
+      // Absolute guard: never stay stuck in "analyzing"
+      setIsAnalyzing(false);
+      setSelectedPost(null);
+    }
   };
 
   const handleReset = () => {
@@ -432,6 +676,7 @@ const App: React.FC = () => {
     setFeedbackHistory([]);
     setLogs([]);
     setPendingSmartFeed(null);
+    setSoftDownrankRules([]);
     setShowOnboarding(true);
     setShowInstructionModal(true);
     setHighlightMenu(true);
@@ -439,7 +684,10 @@ const App: React.FC = () => {
     // Reset user persona
     setUserPersona({
       description: "新用户，等待更多反馈来描绘画像...",
-      emojiFusion: ['👤', '🤔']
+      emojiFusion: ['👤', '🤔'],
+      userTraits: [],
+      redFlags: [],
+      redFlagKeywords: []
     });
     setEmojiFusionImage(null);
     
@@ -460,7 +708,8 @@ const App: React.FC = () => {
     profileOverride?: UserProfile, 
     explicitIntentString?: string, 
     currentHistory?: string[],
-    rawSearchQuery?: string | null
+    rawSearchQuery?: string | null,
+    newlyAddedSoftRule?: SoftDownrankRule | null
   ) => {
     // A. Visual Feedback
     setIsStage1Refreshing(true); 
@@ -469,11 +718,57 @@ const App: React.FC = () => {
     await new Promise(resolve => setTimeout(resolve, 300)); 
 
     const profileToUse = profileOverride || userProfile;
+    const rulesBase = softDownrankRulesRef.current || [];
+
+    // Merge Stage 1 aspect rules + Stage 4 red-flag keywords (equal reference for deterministic downrank)
+    const personaKeywords = userPersonaRef.current?.redFlagKeywords || [];
+    const personaKeywordRules: SoftDownrankRule[] = personaKeywords
+      .filter(k => typeof k === 'string' && k.trim().length > 0)
+      .slice(0, 5)
+      .map(k => ({ query: k.trim(), strength: 2, createdAt: 0 }));
+
+    const entityRules: SoftDownrankRule[] = (entityDislikesRef.current || [])
+      .slice(0, MAX_NAMED_AVOIDS)
+      .map(e => ({ query: e.value, strength: Math.max(1, Math.min(3, e.strength)), createdAt: e.createdAt }));
+
+    const aspectRules: SoftDownrankRule[] = (aspectDislikesRef.current || [])
+      .slice(0, MAX_NAMED_AVOIDS)
+      .map(a => ({ query: a.value, strength: Math.max(1, Math.min(3, a.strength)), createdAt: a.createdAt }));
+
+    const merged = [
+      ...(newlyAddedSoftRule ? [newlyAddedSoftRule] : []),
+      ...rulesBase,
+      ...personaKeywordRules,
+      ...entityRules,
+      ...aspectRules
+    ];
+
+    // Deduplicate by query text (and keep max strength), keep newest N for the stage1-derived rules.
+    const byQuery = new Map<string, SoftDownrankRule>();
+    for (const r of merged) {
+      const key = (r.targetPostId ? `id:${r.targetPostId}` : `q:${(r.query || '').trim().toLowerCase()}`);
+      const prev = byQuery.get(key);
+      if (!prev) {
+        byQuery.set(key, r);
+      } else {
+        byQuery.set(key, {
+          ...prev,
+          strength: Math.max(prev.strength, r.strength),
+          createdAt: Math.max(prev.createdAt, r.createdAt),
+        });
+      }
+    }
+
+    const rulesToUse: SoftDownrankRule[] = Array.from(byQuery.values())
+      // prefer newest (stage1) over persona defaults when trimming
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .slice(0, MAX_SOFT_DOWNRANK_RULES + 5); // allow persona keywords to coexist with recent aspect rules
     
     // B. STAGE 1.5: Hybrid Retrieval (Algo + Search)
     // If rawSearchQuery exists, this returns a mix of Top 15 Interest + Top 10 Search.
     // If not, it returns Top 25 Interest.
-    const hybridCandidates = getHybridFeed(COMBINED_POSTS, profileToUse, rawSearchQuery);
+    const hybridCandidatesBase = getHybridFeed(COMBINED_POSTS, profileToUse, rawSearchQuery);
+    const hybridCandidates = applySoftDownrank(hybridCandidatesBase, rulesToUse);
     
     // For immediate display (while Stage 2 loads), we just use the Hybrid result.
     // We sort by score mainly so it looks decent before the LLM fixes it.
@@ -498,7 +793,9 @@ const App: React.FC = () => {
     // We pass the "rest of feed" just in case, though usually we just append it.
     // Actually, to keep the feed deep, let's append the *rest* of the algo-sorted posts 
     // that weren't in the top 25 candidate pool.
-    const allAlgoSorted = rankPosts(COMBINED_POSTS, profileToUse);
+    const allAlgoSortedBase = rankPosts(COMBINED_POSTS, profileToUse);
+    const allAlgoSorted = applySoftDownrank(allAlgoSortedBase, rulesToUse)
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
     const candidateIds = new Set(hybridCandidates.map(p => p.id));
     const restOfFeed = allAlgoSorted.filter(p => !candidateIds.has(p.id));
 
@@ -629,7 +926,10 @@ const App: React.FC = () => {
       // 使用函数式更新确保状态正确更新
       setUserPersona(prev => ({
         description: descriptionResult.description,
-        emojiFusion: emojiResult.emojiFusion
+        emojiFusion: emojiResult.emojiFusion,
+        userTraits: descriptionResult.userTraits,
+        redFlags: descriptionResult.redFlags,
+        redFlagKeywords: descriptionResult.redFlagKeywords
       }));
       
       // 直接使用从 metadata.json 获取的 URL（每次更新）
@@ -646,6 +946,9 @@ const App: React.FC = () => {
         emoji_fusion: emojiResult.emojiFusion.join(' '),
         fusion_image: emojiResult.fusionUrl ? `✅ Generated: ${emojiResult.fusionUrl.substring(0, 60)}...` : '❌ Failed - using fallback',
         description_preview: descriptionResult.description.substring(0, 100) + '...',
+        red_flags: descriptionResult.redFlags,
+        red_flag_keywords: descriptionResult.redFlagKeywords,
+        user_traits: descriptionResult.userTraits,
         history_length: history.length
       });
     } catch (error) {
