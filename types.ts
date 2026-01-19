@@ -68,10 +68,18 @@ export interface FeedbackAnalysisResult {
 }
 
 export interface UserPersona {
-  description: string;  // 文字描述的用户画像
+  description: string;  // 文字描述的用户画像（legacy / fallback）
+  descriptionEn?: string;
+  descriptionZh?: string;
   emojiFusion: string[]; // emoji组合数组，固定2个
   lastUpdated?: number;  // 最后更新时间戳
   userTraits?: string[]; // 用户稳定特征（最多5条）
+  userTraitsEn?: string[];
+  userTraitsZh?: string[];
   redFlags?: string[]; // 用户雷点（最多5条）
+  redFlagsEn?: string[];
+  redFlagsZh?: string[];
   redFlagKeywords?: string[]; // 用于排序匹配的关键词（最多5条）
+  nicknameEn?: string;
+  nicknameZh?: string;
 }

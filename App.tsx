@@ -10,6 +10,7 @@ import { PostCard } from './components/PostCard';
 import { FeedbackModal } from './components/FeedbackModal';
 import { Dashboard } from './components/Dashboard';
 import { LiquidGlassBackground } from './components/LiquidGlassBackground';
+import { t } from './i18n';
 import { ArrowUp, Key, Check, RefreshCcw, ArrowLeft, ArrowRight, Menu, X, Sparkles, BrainCircuit, Zap, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -90,7 +91,9 @@ const App: React.FC = () => {
   
   // User Persona (Stage 4)
   const [userPersona, setUserPersona] = useState<UserPersona>({
-    description: "新用户，等待更多反馈来描绘画像...",
+    description: t('zh', 'defaultPersonaDescription'),
+    descriptionZh: t('zh', 'defaultPersonaDescription'),
+    descriptionEn: t('en', 'defaultPersonaDescription'),
     emojiFusion: ['👤', '🤔'],
     userTraits: [],
     redFlags: [],
@@ -107,6 +110,16 @@ const App: React.FC = () => {
   
   // Localization
   const [language, setLanguage] = useState<'en' | 'zh'>('en');
+
+  // Keep profile display name synced with language if we already have bilingual nicknames.
+  useEffect(() => {
+    const en = userPersonaRef.current?.nicknameEn;
+    const zh = userPersonaRef.current?.nicknameZh;
+    if (!en && !zh) return;
+    const desired = language === 'zh' ? (zh || en) : (en || zh);
+    if (!desired) return;
+    setUserProfile(prev => (prev.name === desired ? prev : { ...prev, name: desired }));
+  }, [language]);
 
   // API Key
   const [apiKey, setApiKey] = useState('');
@@ -855,7 +868,9 @@ const App: React.FC = () => {
     
     // Reset user persona
     setUserPersona({
-      description: "新用户，等待更多反馈来描绘画像...",
+      description: t('zh', 'defaultPersonaDescription'),
+      descriptionZh: t('zh', 'defaultPersonaDescription'),
+      descriptionEn: t('en', 'defaultPersonaDescription'),
       emojiFusion: ['👤', '🤔'],
       userTraits: [],
       redFlags: [],
@@ -1179,7 +1194,11 @@ const App: React.FC = () => {
       setUserPersona(prev => ({
         ...prev,
         userTraits: signals.userTraits,
+        userTraitsZh: (signals as any).userTraitsZh || signals.userTraits,
+        userTraitsEn: (signals as any).userTraitsEn || prev.userTraitsEn,
         redFlags: signals.redFlags,
+        redFlagsZh: (signals as any).redFlagsZh || signals.redFlags,
+        redFlagsEn: (signals as any).redFlagsEn || prev.redFlagsEn,
         redFlagKeywords: signals.redFlagKeywords
       }));
 
@@ -1214,7 +1233,7 @@ const App: React.FC = () => {
       );
 
       // Banner UX (4s)
-      setRefineBannerMessage('已为你细化排序');
+      setRefineBannerMessage(t(language, 'refineBannerRefinedSort'));
       if (refineBannerTimeoutRef.current) window.clearTimeout(refineBannerTimeoutRef.current);
       refineBannerTimeoutRef.current = window.setTimeout(() => setRefineBannerMessage(null), 4000);
       
@@ -1226,18 +1245,28 @@ const App: React.FC = () => {
         currentProfile.name
       );
       console.log(`[App] ✅ Nickname generated:`, nicknameResult.nickname);
-      
-      // 更新用户名字
-      if (nicknameResult.nickname && nicknameResult.nickname !== currentProfile.name) {
-        setUserProfile(prev => ({ ...prev, name: nicknameResult.nickname }));
-        console.log(`[App] ✅ User name updated to: ${nicknameResult.nickname}`);
+      const nicknameEn = (nicknameResult as any).nicknameEn || nicknameResult.nickname;
+      const nicknameZh = (nicknameResult as any).nicknameZh || undefined;
+
+      // Store bilingual nicknames for UI toggling
+      setUserPersona(prev => ({
+        ...prev,
+        nicknameEn,
+        nicknameZh
+      }));
+
+      // Update displayed name to match current UI language (no extra LLM calls on toggle)
+      const nextName = language === 'zh' ? (nicknameZh || nicknameEn) : nicknameEn;
+      if (nextName && nextName !== currentProfile.name) {
+        setUserProfile(prev => ({ ...prev, name: nextName }));
+        console.log(`[App] ✅ User name updated to: ${nextName}`);
       }
       
       // 线2：生成用户画像描述（只基于反馈，不涉及标签和emoji）
       const descriptionResult = await generateUserPersonaDescription(
         history,
         apiKey,
-        userPersona?.description
+        userPersona?.descriptionZh || userPersona?.description
       );
       console.log(`[App] ✅ Description generated:`, descriptionResult.description.substring(0, 50));
       
@@ -1259,10 +1288,16 @@ const App: React.FC = () => {
       setUserPersona(prev => ({
         ...prev,
         description: descriptionResult.description,
+        descriptionZh: (descriptionResult as any).descriptionZh || descriptionResult.description,
+        descriptionEn: (descriptionResult as any).descriptionEn || prev.descriptionEn,
         emojiFusion: emojiResult.emojiFusion,
         // Keep latest signals in state (do NOT trigger another refine rerank)
         userTraits: (descriptionResult.userTraits && descriptionResult.userTraits.length > 0) ? descriptionResult.userTraits : prev.userTraits,
+        userTraitsZh: (descriptionResult as any).userTraitsZh || prev.userTraitsZh,
+        userTraitsEn: (descriptionResult as any).userTraitsEn || prev.userTraitsEn,
         redFlags: (descriptionResult.redFlags && descriptionResult.redFlags.length > 0) ? descriptionResult.redFlags : prev.redFlags,
+        redFlagsZh: (descriptionResult as any).redFlagsZh || prev.redFlagsZh,
+        redFlagsEn: (descriptionResult as any).redFlagsEn || prev.redFlagsEn,
         redFlagKeywords: (descriptionResult.redFlagKeywords && descriptionResult.redFlagKeywords.length > 0) ? descriptionResult.redFlagKeywords : prev.redFlagKeywords
       }));
       
@@ -1545,6 +1580,7 @@ const App: React.FC = () => {
                      logs={logs} 
                      onReset={handleReset}
                      className="space-y-6"
+                     language={language}
                      userPersona={userPersona}
                      emojiFusionImage={emojiFusionImage}
                   />
@@ -1776,6 +1812,7 @@ const App: React.FC = () => {
                userProfile={userProfile} 
                logs={logs} 
                onReset={handleReset}
+               language={language}
                userPersona={userPersona}
                emojiFusionImage={emojiFusionImage}
              />

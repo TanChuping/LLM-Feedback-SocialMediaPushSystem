@@ -597,7 +597,7 @@ export const generateUserNickname = async (
   feedbackHistory: string[],
   providedKey: string,
   existingNickname?: string
-): Promise<{ nickname: string; rawResponse?: any }> => {
+): Promise<{ nickname: string; nicknameEn?: string; nicknameZh?: string; rawResponse?: any }> => {
   
   if (feedbackHistory.length === 0) {
     return { 
@@ -609,7 +609,7 @@ export const generateUserNickname = async (
   const existingName = existingNickname || "New Explorer";
 
   // 简洁的 prompt，生成友好、有趣的用户名字
-  const systemPrompt = `生成友好、有趣的用户昵称（最多3个单词，英文）。基于用户反馈，突出兴趣/风格/心情，避免冒犯。
+  const systemPrompt = `生成友好、有趣的用户昵称。基于用户反馈，突出兴趣/风格/心情，避免冒犯。\n\n你不需要双语思考，只需最终输出包含中英文两个字段。\n\n要求：\n- nickname_en：英文，最多3个单词\n- nickname_zh：中文，2-6个字（尽量简短好记）
 
 示例：
 - 爱吃美食 → "ramen explorer", "pizza chaser", "snack seeker"
@@ -623,7 +623,7 @@ export const generateUserNickname = async (
 3. 基于用户最新反馈和整体形象
 4. 如果现有名字已经很准确，可以保持或微调
 
-输出JSON: { "nickname": "名字（最多3个单词）" }`;
+输出JSON: { "nickname_en": "English name", "nickname_zh": "中文名" }`;
 
   const limitedHistory = recentHistory.length > 500 
     ? recentHistory.substring(0, 500) + '...' 
@@ -650,12 +650,16 @@ export const generateUserNickname = async (
       3,
     );
 
-    // 验证并清理名字（确保最多3个单词）
-    const nickname = result.nickname || existingName;
-    const words = nickname.trim().split(/\s+/).slice(0, 3).join(' ');
+    // 验证并清理名字（英文<=3词，中文<=6字）
+    const nicknameEnRaw = (result.nickname_en || result.nickname || existingName) as string;
+    const nicknameZhRaw = (result.nickname_zh || '') as string;
+    const nicknameEn = String(nicknameEnRaw || existingName).trim().split(/\s+/).slice(0, 3).join(' ');
+    const nicknameZh = String(nicknameZhRaw || '').trim().slice(0, 6);
     
     return {
-      nickname: words || existingName,
+      nickname: nicknameEn || existingName,
+      nicknameEn: nicknameEn || existingName,
+      nicknameZh: nicknameZh || undefined,
       rawResponse: result
     };
 
@@ -672,14 +676,23 @@ export const generateUserNickname = async (
 export const generateUserPersonaSignals = async (
   feedbackHistory: string[],
   providedKey: string
-): Promise<{ userTraits: string[]; redFlags: string[]; redFlagKeywords: string[]; rawResponse?: any }> => {
+): Promise<{
+  userTraits: string[];
+  userTraitsEn?: string[];
+  userTraitsZh?: string[];
+  redFlags: string[];
+  redFlagsEn?: string[];
+  redFlagsZh?: string[];
+  redFlagKeywords: string[];
+  rawResponse?: any;
+}> => {
   if (!feedbackHistory || feedbackHistory.length === 0) {
     return { userTraits: [], redFlags: [], redFlagKeywords: [] };
   }
 
   const recent = feedbackHistory.slice(-10).join('\n');
 
-  const systemPrompt = `你是一个“用户反馈画像信号提取器”。只输出可用于推荐排序的结构化信号，不写长文，不写昵称，不写emoji。\n\n输入是用户最近的反馈（可能中英混杂，且每条可能包含 Target 标题）。\n\n你需要输出三组列表（每组最多5条，越短越好）：\n1) user_traits：稳定偏好/特征（尽量客观、有证据）\n2) red_flags：用户雷点/排斥点（尽量用“喜欢X但讨厌Y”的具体表达）\n3) red_flag_keywords：用于确定性匹配的短关键词/短语（最多5条），用于把相似内容在排序中压下去。\n\n强约束（必须遵守）：\n- 只基于输入事实，不要脑补（禁止凭空造“富人/穷人/不关心XX”等未出现结论）。\n- 如果用户讨厌的是具体实体（明星/角色/品牌/公司/学校/人名），red_flags 必须写出该名字，例如“喜欢音乐但讨厌 Adele”。\n- red_flag_keywords 必须包含该名字的原样字符串（例如标题里的 \"Adele\"、\"散兵\"、\"DeepSeek\"），不要用“某些明星/特定明星/一些人”等泛化词。\n- 若无法给出具体名字，就不要编造；宁可输出空数组。\n\nred_flag_keywords 规则：\n- 短、可命中标题/正文/标签；不要写长句\n- 中英文都可以\n- 内容角度/质量类可用短语：\"标题党\" \"低质量评测\" \"小红书口吻\" \"集美小仙女\" 等\n\n输出JSON（字段必须存在）:\n{\n  \"user_traits\": [\"...\"],\n  \"red_flags\": [\"...\"],\n  \"red_flag_keywords\": [\"...\"]\n}`;
+  const systemPrompt = `你是一个“用户反馈画像信号提取器”。只输出可用于推荐排序的结构化信号，不写长文，不写昵称，不写emoji。\n\n输入是用户最近的反馈（可能中英混杂，且每条可能包含 Target 标题）。\n\n你需要输出三组列表（每组最多5条，越短越好）：\n1) user_traits_zh / user_traits_en：稳定偏好/特征（中文+英文各一份；英文用于UI展示）\n2) red_flags_zh / red_flags_en：用户雷点/排斥点（中文+英文各一份；英文用于UI展示）\n3) red_flag_keywords：用于确定性匹配的短关键词/短语（最多5条），用于把相似内容在排序中压下去。\n\n重要：你的内部推理不需要双语；只要求最终输出字段提供中英文两份。\n\n强约束（必须遵守）：\n- 只基于输入事实，不要脑补（禁止凭空造“富人/穷人/不关心XX”等未出现结论）。\n- 如果用户讨厌的是具体实体（明星/角色/品牌/公司/学校/人名），red_flags_zh 必须写出该名字，例如“喜欢音乐但讨厌 Adele”。\n- red_flag_keywords 必须包含该名字的原样字符串（例如标题里的 \"Adele\"、\"散兵\"、\"DeepSeek\"），不要用“某些明星/特定明星/一些人”等泛化词。\n- 若无法给出具体名字，就不要编造；宁可输出空数组。\n\nred_flag_keywords 规则：\n- 短、可命中标题/正文/标签；不要写长句\n- 中英文都可以\n- 内容角度/质量类可用短语：\"标题党\" \"低质量评测\" \"小红书口吻\" \"集美小仙女\" 等\n\n输出JSON（字段必须存在）:\n{\n  \"user_traits_zh\": [\"...\"],\n  \"user_traits_en\": [\"...\"],\n  \"red_flags_zh\": [\"...\"],\n  \"red_flags_en\": [\"...\"],\n  \"red_flag_keywords\": [\"...\"]\n}`;
 
   const userPrompt = `最近反馈（最多10条，按时间从旧到新）：\n${recent}`;
 
@@ -704,9 +717,18 @@ export const generateUserPersonaSignals = async (
         .slice(0, 5);
     };
 
+    const zhTraits = toStringArray(result.user_traits_zh ?? result.user_traits);
+    const enTraits = toStringArray(result.user_traits_en);
+    const zhFlags = toStringArray(result.red_flags_zh ?? result.red_flags);
+    const enFlags = toStringArray(result.red_flags_en);
+
     return {
-      userTraits: toStringArray(result.user_traits),
-      redFlags: toStringArray(result.red_flags),
+      userTraits: zhTraits,
+      userTraitsZh: zhTraits,
+      userTraitsEn: enTraits,
+      redFlags: zhFlags,
+      redFlagsZh: zhFlags,
+      redFlagsEn: enFlags,
       redFlagKeywords: toStringArray(result.red_flag_keywords),
       rawResponse: result
     };
@@ -720,11 +742,25 @@ export const generateUserPersonaDescription = async (
   feedbackHistory: string[],
   providedKey: string,
   existingDescription?: string
-): Promise<{ description: string; userTraits: string[]; redFlags: string[]; redFlagKeywords: string[]; rawResponse?: any }> => {
+): Promise<{
+  description: string;
+  descriptionZh?: string;
+  descriptionEn?: string;
+  userTraits: string[];
+  userTraitsZh?: string[];
+  userTraitsEn?: string[];
+  redFlags: string[];
+  redFlagsZh?: string[];
+  redFlagsEn?: string[];
+  redFlagKeywords: string[];
+  rawResponse?: any;
+}> => {
   
   if (feedbackHistory.length === 0) {
     return { 
       description: "新用户，等待更多反馈来描绘画像...",
+      descriptionZh: "新用户，等待更多反馈来描绘画像...",
+      descriptionEn: "New user — waiting for more feedback to build a persona...",
       userTraits: [],
       redFlags: [],
       redFlagKeywords: []
@@ -734,12 +770,17 @@ export const generateUserPersonaDescription = async (
   const recentHistory = feedbackHistory.slice(-10).join(" | ");
   const existingDesc = existingDescription || "无";
 
-  // Stage 4: 输出画像 + 可用于排序的“雷点/特征”摘要（不额外增加调用，只改变输出结构）
-  const systemPrompt = `生成用户画像描述（200-400字）。只基于反馈文本和帖子内容，不涉及标签/emoji/技术。
+  // Stage 4: 输出画像 + 可用于排序的“雷点/特征”摘要
+  // Note: Do NOT require bilingual reasoning; only require bilingual final fields for UI.
+  const systemPrompt = `生成用户画像描述。只基于反馈文本和帖子内容，不涉及标签/emoji/技术。
+
+你需要输出两份描述：
+- description_zh：中文（200-400字）
+- description_en：英文（3-6句，简洁）
 
 你还需要总结两类列表（每类最多5条）：
-1) user_traits：稳定特征/偏好（尽量客观、有证据）
-2) red_flags：用户“雷点/排斥点”，常见形式是“虽然喜欢X，但讨厌Y类型内容/角度/行为”
+1) user_traits_zh / user_traits_en：稳定特征/偏好（中文+英文各一份；英文用于UI展示）
+2) red_flags_zh / red_flags_en：用户“雷点/排斥点”（中文+英文各一份；英文用于UI展示）
 
 同时输出 red_flag_keywords：每条是一个用于确定性匹配的短关键词/短语（最多5条），用于把相似内容在排序中压下去。
 关键词要求：短、可命中标题/正文/标签；不要写长句；可以是中文短语或英文token。
@@ -761,9 +802,12 @@ export const generateUserPersonaDescription = async (
 
 输出JSON（字段必须存在）:
 {
-  "description": "描述文本",
-  "user_traits": ["..."],
-  "red_flags": ["..."],
+  "description_zh": "描述文本",
+  "description_en": "Description",
+  "user_traits_zh": ["..."],
+  "user_traits_en": ["..."],
+  "red_flags_zh": ["..."],
+  "red_flags_en": ["..."],
   "red_flag_keywords": ["..."]
 }`;
 
@@ -805,9 +849,15 @@ export const generateUserPersonaDescription = async (
     };
 
     return {
-      description: result.description || existingDescription || "画像生成中...",
-      userTraits: toStringArray(result.user_traits),
-      redFlags: toStringArray(result.red_flags),
+      description: result.description_zh || result.description || existingDescription || "画像生成中...",
+      descriptionZh: result.description_zh || result.description || existingDescription || "画像生成中...",
+      descriptionEn: result.description_en || "Persona is being generated...",
+      userTraits: toStringArray(result.user_traits_zh ?? result.user_traits),
+      userTraitsZh: toStringArray(result.user_traits_zh ?? result.user_traits),
+      userTraitsEn: toStringArray(result.user_traits_en),
+      redFlags: toStringArray(result.red_flags_zh ?? result.red_flags),
+      redFlagsZh: toStringArray(result.red_flags_zh ?? result.red_flags),
+      redFlagsEn: toStringArray(result.red_flags_en),
       redFlagKeywords: toStringArray(result.red_flag_keywords),
       rawResponse: result
     };

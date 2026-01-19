@@ -3,6 +3,7 @@ import { UserProfile, SystemLog, WeightedTag, UserPersona } from '../types';
 import { Activity, User, Terminal, RefreshCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
+import { Language, t } from '../i18n';
 
 interface DashboardProps {
   userProfile: UserProfile;
@@ -12,6 +13,7 @@ interface DashboardProps {
   enableLiquidGlass?: boolean; // 新增：是否启用液态玻璃效果
   userPersona?: UserPersona;
   emojiFusionImage?: string | null;
+  language: Language;
 }
 
 const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string }> = ({ tagData, colorClass }) => {
@@ -62,7 +64,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onReset, 
   className,
   userPersona,
-  emojiFusionImage
+  emojiFusionImage,
+  language
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
@@ -86,7 +89,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       <div className="flex items-center justify-between px-2">
         <h2 className="text-xl font-bold text-gray-900 drop-shadow-sm flex items-center gap-2">
           <Activity className="text-blue-600" />
-          System Internals
+          {t(language, 'systemInternals')}
         </h2>
         <motion.button 
           whileHover={{ scale: 1.05, color: '#dc2626' }}
@@ -97,7 +100,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <motion.div whileHover={{ rotate: 180 }} transition={{ duration: 0.3 }}>
             <RefreshCcw size={14} />
           </motion.div>
-          Reset Demo
+          {t(language, 'resetDemo')}
         </motion.button>
       </div>
 
@@ -162,8 +165,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             
             <div className="flex-1">
-              <h3 className="font-bold text-gray-900">{userProfile.name}</h3>
-              <p className="text-xs text-blue-600 font-medium">Live User Profile Model</p>
+              <h3 className="font-bold text-gray-900">
+                {language === 'zh'
+                  ? (userPersona?.nicknameZh || userProfile.name)
+                  : (userPersona?.nicknameEn || userProfile.name)}
+              </h3>
+              <p className="text-xs text-blue-600 font-medium">{t(language, 'liveUserProfileModel')}</p>
             </div>
             
             {/* 展开/折叠按钮 */}
@@ -173,7 +180,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 whileTap={{ scale: 0.9 }}
                 onClick={() => setIsDescriptionExpanded(!isDescriptionExpanded)}
                 className="text-gray-600 hover:text-gray-900 transition-colors"
-                title={isDescriptionExpanded ? "Collapse description" : "Expand description"}
+                title={isDescriptionExpanded ? t(language, 'collapseDescription') : t(language, 'expandDescription')}
               >
                 <motion.svg
                   width="20"
@@ -197,7 +204,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
           
           {/* 用户画像文字描述（默认折叠） */}
-          {userPersona?.description && (
+          {(userPersona?.description || userPersona?.descriptionZh || userPersona?.descriptionEn) && (
             <AnimatePresence>
               {isDescriptionExpanded && (
                 <motion.div
@@ -210,7 +217,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <div className="flex items-start gap-2">
                     <span className="text-lg">📝</span>
                     <p className="text-xs text-gray-700 leading-relaxed font-medium">
-                      {userPersona.description}
+                      {language === 'zh'
+                        ? (userPersona.descriptionZh || userPersona.description || t(language, 'defaultPersonaDescription'))
+                        : (userPersona.descriptionEn || userPersona.description || t(language, 'defaultPersonaDescription'))}
                     </p>
                   </div>
 
@@ -219,19 +228,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <div className="mt-3 space-y-2">
                       {userPersona.userTraits && userPersona.userTraits.length > 0 && (
                         <div>
-                          <div className="text-[11px] font-bold text-gray-800">Traits</div>
+                          <div className="text-[11px] font-bold text-gray-800">{t(language, 'traits')}</div>
                           <ul className="mt-1 list-disc pl-5 text-[11px] text-gray-700 space-y-0.5">
-                            {userPersona.userTraits.slice(0, 5).map((t, idx) => (
-                              <li key={`trait-${idx}`}>{t}</li>
+                            {(language === 'zh'
+                              ? (userPersona.userTraitsZh || userPersona.userTraits || [])
+                              : (userPersona.userTraitsEn || userPersona.userTraits || [])
+                            ).slice(0, 5).map((trait, idx) => (
+                              <li key={`trait-${idx}`}>{trait}</li>
                             ))}
                           </ul>
                         </div>
                       )}
                       {userPersona.redFlags && userPersona.redFlags.length > 0 && (
                         <div>
-                          <div className="text-[11px] font-bold text-gray-800">Red flags (Downrank-only)</div>
+                          <div className="text-[11px] font-bold text-gray-800">{t(language, 'redFlagsDownrankOnly')}</div>
                           <ul className="mt-1 list-disc pl-5 text-[11px] text-gray-700 space-y-0.5">
-                            {userPersona.redFlags.slice(0, 5).map((rf, idx) => (
+                            {(language === 'zh'
+                              ? (userPersona.redFlagsZh || userPersona.redFlags || [])
+                              : (userPersona.redFlagsEn || userPersona.redFlags || [])
+                            ).slice(0, 5).map((rf, idx) => (
                               <li key={`rf-${idx}`}>{rf}</li>
                             ))}
                           </ul>
@@ -250,7 +265,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700 uppercase tracking-wider">
                 <span className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm"></span>
-                Interest Vectors (Likes)
+                {t(language, 'interestVectorsLikes')}
               </div>
             </div>
             <div className="flex flex-wrap gap-2.5">
@@ -261,7 +276,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   colorClass="bg-green-50/80 backdrop-blur-sm text-green-800 border-green-200/50" 
                 />
               ))}
-              {userProfile.interests.length === 0 && <span className="text-xs text-gray-500">No interests...</span>}
+              {userProfile.interests.length === 0 && <span className="text-xs text-gray-500">{t(language, 'noInterests')}</span>}
             </div>
           </div>
 
@@ -269,12 +284,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700 uppercase tracking-wider">
                 <span className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm animate-pulse"></span>
-                Negative Filters (Dislikes)
+                {t(language, 'negativeFiltersDislikes')}
               </div>
             </div>
             <div className="flex flex-wrap gap-2.5 min-h-[2rem]">
               {userProfile.dislikes.length === 0 ? (
-                <span className="text-xs text-gray-500 italic">No negative filters yet...</span>
+                <span className="text-xs text-gray-500 italic">{t(language, 'noNegativeFiltersYet')}</span>
               ) : (
                 userProfile.dislikes.map(t => (
                   <TagChip 
@@ -308,7 +323,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           className="flex-1 p-4 overflow-y-auto custom-scrollbar font-mono text-xs space-y-4"
         >
           {logs.length === 0 && (
-            <div className="text-gray-500 text-center mt-10">Waiting for interaction...</div>
+            <div className="text-gray-500 text-center mt-10">{t(language, 'waitingForInteraction')}</div>
           )}
           
           {logs.map((log) => (
