@@ -113,11 +113,11 @@ flowchart TD
 - Stage 4 summarizes durable `red_flags` (human readable) + `red_flag_keywords` (matchable phrases, max 5) so later refreshes can apply consistent aspect-level downranking without extra LLM calls.
 - Topic-level dislikes are intentionally harder to trigger (explicit stop intent or repeated negatives), to reduce umbrella-tag collateral damage.
 
----
-![1of4-1](https://github.com/user-attachments/assets/b7e0a2ac-c16b-4f58-b8be-9f92a54f2fbc)
-![2 of 4-1~1](https://github.com/user-attachments/assets/d55ce76c-48d7-4c83-bc3e-47c40c0c9785)
-![3 of 4-1](https://github.com/user-attachments/assets/fa3b1fa5-1858-4397-be1e-e92287250317)
-![4 of 4-1](https://github.com/user-attachments/assets/5a21dfe9-669e-4824-b3d6-1aba19a341de)
+
+![Image](https://github.com/user-attachments/assets/394c7639-91df-490f-afbf-3ef0a133244b)
+![Image](https://github.com/user-attachments/assets/551cdaf7-1b0b-4657-8536-896c6d56e749)
+![Image](https://github.com/user-attachments/assets/23928a73-a82e-4713-98ac-6b2666d4ef4c)
+![Image](https://github.com/user-attachments/assets/d4fc9365-c49b-40f9-b618-bf49faa70db0)
 
 ---
 ## Ranking Model (Current Version)
