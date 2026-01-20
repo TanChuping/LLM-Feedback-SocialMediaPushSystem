@@ -1,4 +1,4 @@
-# Explainable LLM-Feedback Recommender (Exploratory Demo)
+![4 of 4-1](https://github.com/user-attachments/assets/c68964fa-207d-4c6e-814d-a16fbd0d6958)# Explainable LLM-Feedback Recommender (Exploratory Demo)
 
 > An exploratory engineering project built by a student, investigating **how natural-language user feedback can be translated into controllable preference signals** and used to adjust a recommendation feed in real time — without delegating decision-making to a black-box model.
 
@@ -51,13 +51,6 @@ flowchart TD
 ```
 
 **Workflow (step-by-step):**
-![Image](https://github.com/user-attachments/assets/394c7639-91df-490f-afbf-3ef0a133244b)
-
-![Image](https://github.com/user-attachments/assets/551cdaf7-1b0b-4657-8536-896c6d56e749)
-
-![Image](https://github.com/user-attachments/assets/23928a73-a82e-4713-98ac-6b2666d4ef4c)
-
-![Image](https://github.com/user-attachments/assets/d4fc9365-c49b-40f9-b618-bf49faa70db0)
 
 1. **Cold Start (Randomization)**
    - On load, a random User Profile is generated (few low-weight tags).
@@ -121,7 +114,12 @@ flowchart TD
 - Topic-level dislikes are intentionally harder to trigger (explicit stop intent or repeated negatives), to reduce umbrella-tag collateral damage.
 
 ---
+![1of4-1](https://github.com/user-attachments/assets/b7e0a2ac-c16b-4f58-b8be-9f92a54f2fbc)
+![2 of 4-1~1](https://github.com/user-attachments/assets/d55ce76c-48d7-4c83-bc3e-47c40c0c9785)
+![3 of 4-1](https://github.com/user-attachments/assets/fa3b1fa5-1858-4397-be1e-e92287250317)
+![4 of 4-1](https://github.com/user-attachments/assets/5a21dfe9-669e-4824-b3d6-1aba19a341de)
 
+---
 ## Ranking Model (Current Version)
 
 The feed is ordered using a **weighted linear scoring model**. To solve the semantic ambiguity of tags (e.g., a "Gaming" tag on a "Party" post), we introduced **Per-Post Tag Weights**.
