@@ -1,4 +1,4 @@
-![4 of 4-1](https://github.com/user-attachments/assets/c68964fa-207d-4c6e-814d-a16fbd0d6958)# Explainable LLM-Feedback Recommender (Exploratory Demo)
+
 
 > An exploratory engineering project built by a student, investigating **how natural-language user feedback can be translated into controllable preference signals** and used to adjust a recommendation feed in real time — without delegating decision-making to a black-box model.
 
@@ -113,13 +113,13 @@ flowchart TD
 - Stage 4 summarizes durable `red_flags` (human readable) + `red_flag_keywords` (matchable phrases, max 5) so later refreshes can apply consistent aspect-level downranking without extra LLM calls.
 - Topic-level dislikes are intentionally harder to trigger (explicit stop intent or repeated negatives), to reduce umbrella-tag collateral damage.
 
-
+1/4.
 ![Image](https://github.com/user-attachments/assets/f12229fe-506b-4bce-bb89-cc1522730038#.gif)
-
+2/4.
 ![Image](https://github.com/user-attachments/assets/bd3454c4-820a-477c-ba95-fb820bd68cc0#.gif)
-
+3/4.
 ![Image](https://github.com/user-attachments/assets/6d932a52-9bed-4fa9-876a-f9ce0e8e37e8#.gif)
-
+4/4.
 ![Image](https://github.com/user-attachments/assets/3a61c106-84ec-4e4d-86b5-1484bcbbce51#.gif)
 
 ---
