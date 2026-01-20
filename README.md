@@ -51,6 +51,10 @@ flowchart TD
 ```
 
 **Workflow (step-by-step):**
+![1of4-1](https://github.com/user-attachments/assets/1d9bee4e-1478-4910-adf1-07cf9accc07b)
+![2 of 4-1~1](https://github.com/user-attachments/assets/27193087-f247-4499-a7a5-bc918f912542)
+![3 of 4-1](https://github.com/user-attachments/assets/aa6607e9-7c7d-4548-9ec9-1c45dd6bb327)
+![4 of 4-1](https://github.com/user-attachments/assets/9ac268f8-c4ae-4446-bce3-6ec98a94949a)
 
 1. **Cold Start (Randomization)**
    - On load, a random User Profile is generated (few low-weight tags).
