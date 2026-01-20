@@ -114,10 +114,10 @@ flowchart TD
 - Topic-level dislikes are intentionally harder to trigger (explicit stop intent or repeated negatives), to reduce umbrella-tag collateral damage.
 
 
-![Image](https://github.com/user-attachments/assets/394c7639-91df-490f-afbf-3ef0a133244b)
-![Image](https://github.com/user-attachments/assets/551cdaf7-1b0b-4657-8536-896c6d56e749)
-![Image](https://github.com/user-attachments/assets/23928a73-a82e-4713-98ac-6b2666d4ef4c)
-![Image](https://github.com/user-attachments/assets/d4fc9365-c49b-40f9-b618-bf49faa70db0)
+![Image](https://github.com/user-attachments/assets/394c7639-91df-490f-afbf-3ef0a133244b#.gif)
+![Image](https://github.com/user-attachments/assets/551cdaf7-1b0b-4657-8536-896c6d56e749#.gif)
+![Image](https://github.com/user-attachments/assets/23928a73-a82e-4713-98ac-6b2666d4ef4c#.gif)
+![Image](https://github.com/user-attachments/assets/d4fc9365-c49b-40f9-b618-bf49faa70db0#.gif)
 
 ---
 ## Ranking Model (Current Version)
