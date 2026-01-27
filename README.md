@@ -1,4 +1,4 @@
-** Demo active on(require groq key or password): https://tanchuping.github.io/LLM-Feedback-SocialMediaPushSystem/ **
+**Demo active on(require groq key or password): https://tanchuping.github.io/LLM-Feedback-SocialMediaPushSystem/**
 ---
 
 > An exploratory engineering project built by a student, investigating **how natural-language user feedback can be translated into controllable preference signals** and used to adjust a recommendation feed in real time — without delegating decision-making to a black-box model.
