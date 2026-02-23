@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Post } from '../types';
 import { MoreHorizontal, Heart, MessageSquare } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 
 interface PostCardProps {
@@ -21,6 +21,28 @@ export const PostCard: React.FC<PostCardProps> = ({
 }) => {
   const visibleTags = post.tags.slice(0, 5);
   const remainingTags = post.tags.length - 5;
+
+  const decorativeTipText =
+    language === 'zh' ? '仅装饰按钮（非核心演示）' : 'Decorative only (not core demo)';
+
+  const [likeTipKey, setLikeTipKey] = useState<number | null>(null);
+  const [commentTipKey, setCommentTipKey] = useState<number | null>(null);
+  const likeTipTimerRef = useRef<number | null>(null);
+  const commentTipTimerRef = useRef<number | null>(null);
+
+  const showLikeTip = () => {
+    const k = Date.now();
+    setLikeTipKey(k);
+    if (likeTipTimerRef.current) window.clearTimeout(likeTipTimerRef.current);
+    likeTipTimerRef.current = window.setTimeout(() => setLikeTipKey(null), 1200);
+  };
+
+  const showCommentTip = () => {
+    const k = Date.now();
+    setCommentTipKey(k);
+    if (commentTipTimerRef.current) window.clearTimeout(commentTipTimerRef.current);
+    commentTipTimerRef.current = window.setTimeout(() => setCommentTipKey(null), 1200);
+  };
 
   // 使用液态玻璃 Hook
   const { elementRef, update } = useLiquidGlass({
@@ -42,6 +64,13 @@ export const PostCard: React.FC<PostCardProps> = ({
       console.log(`[PostCard ${post.id}] Disabling liquid glass`);
     }
   }, [enableLiquidGlass, update, post.id]);
+
+  useEffect(() => {
+    return () => {
+      if (likeTipTimerRef.current) window.clearTimeout(likeTipTimerRef.current);
+      if (commentTipTimerRef.current) window.clearTimeout(commentTipTimerRef.current);
+    };
+  }, []);
 
   return (
     <div 
@@ -144,7 +173,8 @@ export const PostCard: React.FC<PostCardProps> = ({
             <motion.button 
               whileHover="hover" 
               whileTap="tap"
-              className="flex items-center gap-1.5 text-gray-600 hover:text-red-500 transition-colors text-sm group font-medium"
+              onClick={showLikeTip}
+              className="relative flex items-center gap-1.5 text-gray-600 hover:text-red-500 transition-colors text-sm group font-medium"
             >
               <motion.div
                 variants={{
@@ -156,12 +186,29 @@ export const PostCard: React.FC<PostCardProps> = ({
                 <Heart size={18} />
               </motion.div>
               <span>{post.likes}</span>
+
+              <AnimatePresence>
+                {likeTipKey && (
+                  <motion.div
+                    key={likeTipKey}
+                    initial={{ opacity: 0, x: 6, scale: 0.98 }}
+                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: 6, scale: 0.98 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    role="status"
+                    className="absolute left-full ml-2 top-1/2 -translate-y-1/2 whitespace-nowrap bg-black/80 backdrop-blur-md text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg shadow-lg pointer-events-none z-30"
+                  >
+                    {decorativeTipText}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.button>
 
             <motion.button 
                whileHover="hover" 
                whileTap="tap"
-               className="flex items-center gap-1.5 text-gray-600 hover:text-blue-600 transition-colors text-sm group font-medium"
+               onClick={showCommentTip}
+               className="relative flex items-center gap-1.5 text-gray-600 hover:text-blue-600 transition-colors text-sm group font-medium"
             >
                <motion.div
                  variants={{
@@ -171,7 +218,23 @@ export const PostCard: React.FC<PostCardProps> = ({
                >
                  <MessageSquare size={18} />
                </motion.div>
-              <span>Reply</span>
+              <span>{language === 'zh' ? '回复' : 'Reply'}</span>
+
+              <AnimatePresence>
+                {commentTipKey && (
+                  <motion.div
+                    key={commentTipKey}
+                    initial={{ opacity: 0, x: 6, scale: 0.98 }}
+                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: 6, scale: 0.98 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    role="status"
+                    className="absolute left-full ml-2 top-1/2 -translate-y-1/2 whitespace-nowrap bg-black/80 backdrop-blur-md text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg shadow-lg pointer-events-none z-30"
+                  >
+                    {decorativeTipText}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.button>
           </div>
           <div className="text-[10px] font-mono text-gray-400 opacity-60" title={post.debugReason}>

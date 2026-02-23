@@ -5,6 +5,11 @@ type UiKey =
   | 'systemInternals'
   | 'resetDemo'
   | 'liveUserProfileModel'
+  | 'personaFunOn'
+  | 'personaFunOff'
+  | 'personaFunToggleTitle'
+  | 'personaFunInfo'
+  | 'personaFunInfoAria'
   | 'expandDescription'
   | 'collapseDescription'
   | 'traits'
@@ -13,6 +18,9 @@ type UiKey =
   | 'negativeFiltersDislikes'
   | 'noInterests'
   | 'noNegativeFiltersYet'
+  | 'mixedLabel'
+  | 'interestLabel'
+  | 'negativeLabel'
   | 'waitingForInteraction'
   | 'defaultPersonaDescription';
 
@@ -22,6 +30,11 @@ const DICT: Record<Language, Record<UiKey, string>> = {
     systemInternals: 'System Internals',
     resetDemo: 'Reset Demo',
     liveUserProfileModel: 'Live User Profile Model',
+    personaFunOn: 'Fun',
+    personaFunOff: 'Fun off',
+    personaFunToggleTitle: 'Toggle nickname + emoji avatar (fun only)',
+    personaFunInfo: "Fun feature: generates nickname + emoji fusion avatar from feedback (doesn't affect recommendations). Changes apply on next persona update.",
+    personaFunInfoAria: 'About the fun feature toggle',
     expandDescription: 'Expand description',
     collapseDescription: 'Collapse description',
     traits: 'Traits',
@@ -30,6 +43,9 @@ const DICT: Record<Language, Record<UiKey, string>> = {
     negativeFiltersDislikes: 'Negative Filters (Dislikes)',
     noInterests: 'No interests...',
     noNegativeFiltersYet: 'No negative filters yet...',
+    mixedLabel: 'Mixed',
+    interestLabel: 'Interest',
+    negativeLabel: 'Negative',
     waitingForInteraction: 'Waiting for interaction...',
     defaultPersonaDescription: 'New user — waiting for more feedback to build a persona...'
   },
@@ -38,6 +54,11 @@ const DICT: Record<Language, Record<UiKey, string>> = {
     systemInternals: '系统内部状态',
     resetDemo: '重置演示',
     liveUserProfileModel: '实时用户画像模型',
+    personaFunOn: '娱乐',
+    personaFunOff: '娱乐关',
+    personaFunToggleTitle: '切换昵称/表情头像（仅娱乐）',
+    personaFunInfo: '娱乐功能：基于反馈生成昵称和表情融合头像（不影响推荐主流程）。开关会在下一轮画像更新时生效。',
+    personaFunInfoAria: '关于娱乐功能开关',
     expandDescription: '展开画像',
     collapseDescription: '收起画像',
     traits: '特征',
@@ -46,6 +67,9 @@ const DICT: Record<Language, Record<UiKey, string>> = {
     negativeFiltersDislikes: '负向过滤（不喜欢）',
     noInterests: '暂无兴趣…',
     noNegativeFiltersYet: '暂无负向过滤…',
+    mixedLabel: '混合',
+    interestLabel: '兴趣',
+    negativeLabel: '负向',
     waitingForInteraction: '等待交互…',
     defaultPersonaDescription: '新用户，等待更多反馈来描绘画像...'
   }

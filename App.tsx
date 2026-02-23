@@ -155,6 +155,13 @@ const App: React.FC = () => {
 
   // Liquid Glass Effect - 默认关闭
   const [enableLiquidGlass, setEnableLiquidGlass] = useState(false);
+
+  // Persona "fun" steps (nickname + emoji fusion). Default OFF.
+  const [enablePersonaFun, setEnablePersonaFun] = useState(false);
+  const enablePersonaFunRef = useRef(enablePersonaFun);
+  useEffect(() => {
+    enablePersonaFunRef.current = enablePersonaFun;
+  }, [enablePersonaFun]);
   
   // Debug: Log when enableLiquidGlass changes
   useEffect(() => {
@@ -638,6 +645,8 @@ const App: React.FC = () => {
     // If LLM says "Interest" -> Add/Boost interest, REMOVE from dislike (Flip).
     // If LLM says "Dislike" -> Add/Boost dislike, REMOVE from interest (Flip).
     const boostedThisTurn: string[] = [];
+    const appliedChanges: string[] = [];
+    const skippedChanges: Array<{ tag: string; reason: string; details?: any }> = [];
     safeAdjustments.forEach((adj: any) => {
       // Try to match LLM's tag to a tag in the available tags pool
       // This handles cases where LLM returns just emoji (e.g., "🎵") instead of full tag (e.g., "🎶 Music")
@@ -682,7 +691,10 @@ const App: React.FC = () => {
         }
       }
 
-      if (isUnmatchedInventedTag) return;
+      if (isUnmatchedInventedTag) {
+        skippedChanges.push({ tag: String(adj.tag || ''), reason: 'unmatched_tag' });
+        return;
+      }
       
       const normMatched = normalizeTag(matchedTag);
 
@@ -714,6 +726,9 @@ const App: React.FC = () => {
           }
         }
         if (typeof adj.delta === 'number' && adj.delta > 0) boostedThisTurn.push(matchedTag);
+        if (typeof adj.delta === 'number' && adj.delta !== 0) {
+          appliedChanges.push(`${matchedTag} (${adj.delta >= 0 ? '+' : ''}${Number(adj.delta).toFixed(1)})`);
+        }
 
       } else if (adj.category === 'dislike') {
         // Topic-level dislikes are gated: only apply if explicit stop words mention topic OR repeated >=3 times.
@@ -738,6 +753,17 @@ const App: React.FC = () => {
           const hitInContent = post.tags.some(t => normalizeTag(t) === normMatched || normalizeTag(t).includes(normMatched));
           if (hitInContent) {
             console.log(`[Dislike Guardrail] Skipping subject dislike "${matchedTag}" due to dislike_scope=aspect`);
+            skippedChanges.push({
+              tag: matchedTag,
+              reason: 'aspect_guardrail_subject_tag',
+              details: { dislike_scope: 'aspect', target_post: postTitle, post_id: post.id }
+            });
+            addLog('PROFILE_UPDATE', 'Adjustment Skipped (Aspect Guardrail)', {
+              tag: matchedTag,
+              dislike_scope: 'aspect',
+              target_post: postTitle,
+              note: 'Skipped subject-tag dislike because feedback was aspect-level and tag appears in target content.'
+            });
             // #region agent log
             try {
               fetch('http://127.0.0.1:7242/ingest/8426c041-d03a-4909-996a-91157fbebdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleFeedbackSubmit:dislike-guardrail-skip',message:'Skipped subject dislike because dislike_scope=aspect and tag is in target post tags',data:{postId:post?.id||null,matchedTag,dislike_scope:(analysis as any)?.dislike_scope||null,soft_downrank_query:(analysis as any)?.soft_downrank_query||null},timestamp:Date.now(),sessionId:'debug-session',runId:'run3',hypothesisId:'H_aspect_guardrail'})}).catch(()=>{});
@@ -777,6 +803,9 @@ const App: React.FC = () => {
              console.log(`[Tag Addition] Added new dislike: "${matchedTag}" (weight: ${initialWeight})`);
            }
         }
+        if (impact > 0) {
+          appliedChanges.push(`${matchedTag} (-${Number(impact).toFixed(1)})`);
+        }
       }
     });
 
@@ -801,7 +830,9 @@ const App: React.FC = () => {
     
     setUserProfile(updatedProfile);
     addLog('PROFILE_UPDATE', `Weights Adjusted (Precise)`, { 
-      changes: safeAdjustments.map((a: any) => `${a.tag} (${a.category === 'dislike' ? '-' : '+'}${Math.abs(a.delta)})`),
+      applied_changes: appliedChanges,
+      skipped_changes: skippedChanges,
+      changes: appliedChanges,
     });
 
     setIsAnalyzing(false);
@@ -1200,6 +1231,9 @@ const App: React.FC = () => {
         return;
       }
 
+      // Snapshot fun-toggle per run so mid-run toggles only apply next time.
+      const funEnabledThisRun = enablePersonaFunRef.current;
+
       // --- Stage 4a: fast persona signals for refine rerank ---
       const signals = await generateUserPersonaSignals(history, apiKey);
       setUserPersona(prev => ({
@@ -1249,28 +1283,34 @@ const App: React.FC = () => {
       refineBannerTimeoutRef.current = window.setTimeout(() => setRefineBannerMessage(null), 4000);
       
       // --- Stage 4b: slow UI updates (no second refine rerank) ---
-      // 线1：生成用户昵称（嘲讽的）
-      const nicknameResult = await generateUserNickname(
-        history,
-        apiKey,
-        currentProfile.name
-      );
-      console.log(`[App] ✅ Nickname generated:`, nicknameResult.nickname);
-      const nicknameEn = (nicknameResult as any).nicknameEn || nicknameResult.nickname;
-      const nicknameZh = (nicknameResult as any).nicknameZh || undefined;
+      // Fun-only steps (nickname + emoji avatar) can be disabled without affecting core flow.
+      let nicknameResult: any | null = null;
+      if (funEnabledThisRun) {
+        // 线1：生成用户昵称
+        nicknameResult = await generateUserNickname(
+          history,
+          apiKey,
+          currentProfile.name
+        );
+        console.log(`[App] ✅ Nickname generated:`, nicknameResult.nickname);
+        const nicknameEn = (nicknameResult as any).nicknameEn || nicknameResult.nickname;
+        const nicknameZh = (nicknameResult as any).nicknameZh || undefined;
 
-      // Store bilingual nicknames for UI toggling
-      setUserPersona(prev => ({
-        ...prev,
-        nicknameEn,
-        nicknameZh
-      }));
+        // Store bilingual nicknames for UI toggling
+        setUserPersona(prev => ({
+          ...prev,
+          nicknameEn,
+          nicknameZh
+        }));
 
-      // Update displayed name to match current UI language (no extra LLM calls on toggle)
-      const nextName = language === 'zh' ? (nicknameZh || nicknameEn) : nicknameEn;
-      if (nextName && nextName !== currentProfile.name) {
-        setUserProfile(prev => ({ ...prev, name: nextName }));
-        console.log(`[App] ✅ User name updated to: ${nextName}`);
+        // Update displayed name to match current UI language (no extra LLM calls on toggle)
+        const nextName = language === 'zh' ? (nicknameZh || nicknameEn) : nicknameEn;
+        if (nextName && nextName !== currentProfile.name) {
+          setUserProfile(prev => ({ ...prev, name: nextName }));
+          console.log(`[App] ✅ User name updated to: ${nextName}`);
+        }
+      } else {
+        console.log('[App] 🎛️ Persona fun steps disabled for this run; skipping nickname + emoji fusion');
       }
       
       // 线2：生成用户画像描述（只基于反馈，不涉及标签和emoji）
@@ -1281,18 +1321,21 @@ const App: React.FC = () => {
       );
       console.log(`[App] ✅ Description generated:`, descriptionResult.description.substring(0, 50));
       
-      // 线3：生成嘲讽的 emoji 融合（独立进行，每次都重新生成）
-      console.log(`[App] 🎨 Starting emoji fusion generation (history length: ${history.length})...`);
-      const emojiResult = await generateEmojiFusion(
-        history,
-        apiKey
-      );
-      console.log(`[App] ✅ Emoji fusion result:`, {
-        emojis: emojiResult.emojiFusion,
-        hasUrl: !!emojiResult.fusionUrl,
-        url: emojiResult.fusionUrl?.substring(0, 80),
-        rawResponse: emojiResult.rawResponse
-      });
+      let emojiResult: any | null = null;
+      if (funEnabledThisRun) {
+        // 线3：生成 emoji 融合头像（独立进行，每次都重新生成）
+        console.log(`[App] 🎨 Starting emoji fusion generation (history length: ${history.length})...`);
+        emojiResult = await generateEmojiFusion(
+          history,
+          apiKey
+        );
+        console.log(`[App] ✅ Emoji fusion result:`, {
+          emojis: emojiResult.emojiFusion,
+          hasUrl: !!emojiResult.fusionUrl,
+          url: emojiResult.fusionUrl?.substring(0, 80),
+          rawResponse: emojiResult.rawResponse
+        });
+      }
       
       // 更新状态（强制更新，即使看起来相同）
       // 使用函数式更新确保状态正确更新
@@ -1301,7 +1344,7 @@ const App: React.FC = () => {
         description: descriptionResult.description,
         descriptionZh: (descriptionResult as any).descriptionZh || descriptionResult.description,
         descriptionEn: (descriptionResult as any).descriptionEn || prev.descriptionEn,
-        emojiFusion: emojiResult.emojiFusion,
+        emojiFusion: (funEnabledThisRun && emojiResult?.emojiFusion) ? emojiResult.emojiFusion : prev.emojiFusion,
         // Keep latest signals in state (do NOT trigger another refine rerank)
         userTraits: (descriptionResult.userTraits && descriptionResult.userTraits.length > 0) ? descriptionResult.userTraits : prev.userTraits,
         userTraitsZh: (descriptionResult as any).userTraitsZh || prev.userTraitsZh,
@@ -1312,19 +1355,22 @@ const App: React.FC = () => {
         redFlagKeywords: (descriptionResult.redFlagKeywords && descriptionResult.redFlagKeywords.length > 0) ? descriptionResult.redFlagKeywords : prev.redFlagKeywords
       }));
       
-      // 直接使用从 metadata.json 获取的 URL（每次更新）
-      setEmojiFusionImage(emojiResult.fusionUrl);
+      // Update avatar image only when fun is enabled.
+      if (funEnabledThisRun) {
+        setEmojiFusionImage(emojiResult?.fusionUrl || null);
+      }
       
       console.log(`[App] ✅ State updated:`, {
         description_length: descriptionResult.description.length,
-        emojiFusion: emojiResult.emojiFusion,
-        hasImage: !!emojiResult.fusionUrl
+        emojiFusion: funEnabledThisRun ? (emojiResult?.emojiFusion || []) : '(unchanged)',
+        hasImage: funEnabledThisRun ? !!emojiResult?.fusionUrl : '(unchanged)'
       });
       
       addLog('PROFILE_UPDATE', 'User Persona Updated (Stage 4)', {
-        nickname: nicknameResult.nickname,
-        emoji_fusion: emojiResult.emojiFusion.join(' '),
-        fusion_image: emojiResult.fusionUrl ? `✅ Generated: ${emojiResult.fusionUrl.substring(0, 60)}...` : '❌ Failed - using fallback',
+        fun_enabled: funEnabledThisRun,
+        nickname: nicknameResult?.nickname || '(unchanged)',
+        emoji_fusion: (funEnabledThisRun && emojiResult?.emojiFusion) ? emojiResult.emojiFusion.join(' ') : '(unchanged)',
+        fusion_image: (funEnabledThisRun && emojiResult?.fusionUrl) ? `✅ Generated: ${emojiResult.fusionUrl.substring(0, 60)}...` : (funEnabledThisRun ? '❌ Failed - using fallback' : '(unchanged)'),
         description_preview: descriptionResult.description.substring(0, 100) + '...',
         red_flags: descriptionResult.redFlags,
         red_flag_keywords: descriptionResult.redFlagKeywords,
@@ -1594,6 +1640,8 @@ const App: React.FC = () => {
                      language={language}
                      userPersona={userPersona}
                      emojiFusionImage={emojiFusionImage}
+                     enablePersonaFun={enablePersonaFun}
+                     onTogglePersonaFun={() => setEnablePersonaFun(v => !v)}
                   />
                 </div>
               </motion.div>
@@ -1826,6 +1874,8 @@ const App: React.FC = () => {
                language={language}
                userPersona={userPersona}
                emojiFusionImage={emojiFusionImage}
+               enablePersonaFun={enablePersonaFun}
+               onTogglePersonaFun={() => setEnablePersonaFun(v => !v)}
              />
           </div>
 

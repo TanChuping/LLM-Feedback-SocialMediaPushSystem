@@ -4,6 +4,7 @@ import { Activity, User, Terminal, RefreshCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 import { Language, t } from '../i18n';
+import { normalizeTag } from '../services/recommendationEngine';
 
 interface DashboardProps {
   userProfile: UserProfile;
@@ -14,9 +15,11 @@ interface DashboardProps {
   userPersona?: UserPersona;
   emojiFusionImage?: string | null;
   language: Language;
+  enablePersonaFun: boolean;
+  onTogglePersonaFun: () => void;
 }
 
-const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string }> = ({ tagData, colorClass }) => {
+const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string; mixedBreakdown?: { interest: number; negative: number; language: Language } }> = ({ tagData, colorClass, mixedBreakdown }) => {
   const prevWeightRef = useRef(tagData.weight);
   const [animData, setAnimData] = useState<{ val: string; key: number } | null>(null);
 
@@ -32,12 +35,19 @@ const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string }> = ({ tagDa
     prevWeightRef.current = tagData.weight;
   }, [tagData.weight]);
 
+  const hasMixed = !!mixedBreakdown && mixedBreakdown.interest > 0 && mixedBreakdown.negative > 0;
+
   return (
-    <div className={`relative px-2.5 py-1.5 ${colorClass} text-xs rounded-lg border flex items-center gap-2 transition-all duration-300 animate-in fade-in zoom-in shadow-sm`}>
+    <div className={`relative group px-2.5 py-1.5 ${colorClass} text-xs rounded-lg border flex items-center gap-2 transition-all duration-300 animate-in fade-in zoom-in shadow-sm`}>
       <span className="font-medium">{tagData.tag}</span>
       <span className="bg-white/60 px-1.5 rounded-md text-[10px] font-mono font-bold min-w-[28px] text-center shadow-sm">
         {tagData.weight.toFixed(1)}
       </span>
+      {hasMixed && (
+        <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-[220px] rounded-xl bg-black/80 backdrop-blur-md text-white text-[11px] leading-relaxed font-semibold px-3 py-2 shadow-xl border border-white/10 z-50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+          {t(mixedBreakdown.language, 'mixedLabel')}: {t(mixedBreakdown.language, 'interestLabel')} +{mixedBreakdown.interest.toFixed(1)}, {t(mixedBreakdown.language, 'negativeLabel')} +{mixedBreakdown.negative.toFixed(1)}
+        </div>
+      )}
       {animData && (
         <span 
           key={animData.key} 
@@ -65,10 +75,61 @@ export const Dashboard: React.FC<DashboardProps> = ({
   className,
   userPersona,
   emojiFusionImage,
-  language
+  language,
+  enablePersonaFun,
+  onTogglePersonaFun
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(true);
+  const [showFunInfo, setShowFunInfo] = useState(false);
+
+  // Merge duplicates across likes/dislikes for display only.
+  type DisplayTag = {
+    key: string;
+    tag: string;
+    interest: number;
+    negative: number;
+    net: number;
+    mixed: boolean;
+  };
+  const buildDisplayTags = (): { likes: DisplayTag[]; dislikes: DisplayTag[] } => {
+    const map = new Map<string, DisplayTag>();
+    for (const it of userProfile.interests || []) {
+      const k = normalizeTag(it.tag);
+      const prev = map.get(k);
+      const nextInterest = Math.max(prev?.interest ?? 0, it.weight ?? 0);
+      map.set(k, {
+        key: k,
+        tag: prev?.tag || it.tag,
+        interest: nextInterest,
+        negative: prev?.negative ?? 0,
+        net: 0,
+        mixed: false
+      });
+    }
+    for (const d of userProfile.dislikes || []) {
+      const k = normalizeTag(d.tag);
+      const prev = map.get(k);
+      const nextNegative = Math.max(prev?.negative ?? 0, d.weight ?? 0);
+      map.set(k, {
+        key: k,
+        tag: prev?.tag || d.tag,
+        interest: prev?.interest ?? 0,
+        negative: nextNegative,
+        net: 0,
+        mixed: false
+      });
+    }
+    const all: DisplayTag[] = [];
+    for (const v of map.values()) {
+      const net = (v.interest || 0) - (v.negative || 0);
+      all.push({ ...v, net, mixed: v.interest > 0 && v.negative > 0 });
+    }
+    const likes = all.filter(x => x.net >= 0).sort((a, b) => b.net - a.net);
+    const dislikes = all.filter(x => x.net < 0).sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+    return { likes, dislikes };
+  };
+  const display = buildDisplayTags();
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -172,6 +233,55 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </h3>
               <p className="text-xs text-blue-600 font-medium">{t(language, 'liveUserProfileModel')}</p>
             </div>
+
+            {/* Fun toggle + info (does not affect core recommendation flow) */}
+            <div className="flex items-center gap-2">
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={onTogglePersonaFun}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                  enablePersonaFun
+                    ? 'bg-black/85 text-white border-black/10'
+                    : 'bg-white/55 text-gray-700 border-white/40 hover:bg-white/75'
+                }`}
+                title={t(language, 'personaFunToggleTitle')}
+              >
+                {enablePersonaFun ? t(language, 'personaFunOn') : t(language, 'personaFunOff')}
+              </motion.button>
+
+              <div
+                className="relative"
+                onMouseEnter={() => setShowFunInfo(true)}
+                onMouseLeave={() => setShowFunInfo(false)}
+              >
+                <button
+                  type="button"
+                  className="w-6 h-6 rounded-full bg-white/50 border border-white/40 text-gray-600 hover:text-gray-900 hover:bg-white/70 text-xs font-black leading-none flex items-center justify-center transition-colors"
+                  aria-label={t(language, 'personaFunInfoAria')}
+                  aria-expanded={showFunInfo}
+                  title={t(language, 'personaFunInfo')}
+                  onFocus={() => setShowFunInfo(true)}
+                  onBlur={() => setShowFunInfo(false)}
+                  onClick={() => setShowFunInfo(v => !v)}
+                >
+                  ⓘ
+                </button>
+                <AnimatePresence>
+                  {showFunInfo && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.16, ease: 'easeOut' }}
+                      className="absolute right-0 top-full mt-2 w-[260px] rounded-xl bg-black/80 backdrop-blur-md text-white text-[11px] leading-relaxed font-semibold px-3 py-2 shadow-xl border border-white/10 z-50"
+                    >
+                      {t(language, 'personaFunInfo')}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
             
             {/* 展开/折叠按钮 */}
             {userPersona?.description && (
@@ -269,14 +379,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
             <div className="flex flex-wrap gap-2.5">
-              {userProfile.interests.map(t => (
-                <TagChip 
-                  key={t.tag} 
-                  tagData={t} 
-                  colorClass="bg-green-50/80 backdrop-blur-sm text-green-800 border-green-200/50" 
+              {display.likes.map(x => (
+                <TagChip
+                  key={x.key}
+                  tagData={{ tag: x.tag, weight: x.net }}
+                  colorClass={
+                    x.mixed
+                      ? 'bg-yellow-50/80 backdrop-blur-sm text-yellow-900 border-yellow-200/60'
+                      : 'bg-green-50/80 backdrop-blur-sm text-green-800 border-green-200/50'
+                  }
+                  mixedBreakdown={x.mixed ? { interest: x.interest, negative: x.negative, language } : undefined}
                 />
               ))}
-              {userProfile.interests.length === 0 && <span className="text-xs text-gray-500">{t(language, 'noInterests')}</span>}
+              {display.likes.length === 0 && <span className="text-xs text-gray-500">{t(language, 'noInterests')}</span>}
             </div>
           </div>
 
@@ -288,14 +403,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
             <div className="flex flex-wrap gap-2.5 min-h-[2rem]">
-              {userProfile.dislikes.length === 0 ? (
+              {display.dislikes.length === 0 ? (
                 <span className="text-xs text-gray-500 italic">{t(language, 'noNegativeFiltersYet')}</span>
               ) : (
-                userProfile.dislikes.map(t => (
-                  <TagChip 
-                    key={t.tag} 
-                    tagData={t} 
-                    colorClass="bg-red-50/80 backdrop-blur-sm text-red-800 border-red-200/50" 
+                display.dislikes.map(x => (
+                  <TagChip
+                    key={x.key}
+                    tagData={{ tag: x.tag, weight: Math.abs(x.net) }}
+                    colorClass={
+                      x.mixed
+                        ? 'bg-yellow-50/80 backdrop-blur-sm text-yellow-900 border-yellow-200/60'
+                        : 'bg-red-50/80 backdrop-blur-sm text-red-800 border-red-200/50'
+                    }
+                    mixedBreakdown={x.mixed ? { interest: x.interest, negative: x.negative, language } : undefined}
                   />
                 ))
               )}
