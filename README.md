@@ -1,4 +1,4 @@
-![Animated demo](./image.svg)
+<img src="./image.svg" alt="Animated demo" width="300" />
 
 **Demo active on(require groq key or password): https://tanchuping.github.io/LLM-Feedback-SocialMediaPushSystem/**
 ---
