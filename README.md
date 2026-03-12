@@ -1,3 +1,5 @@
+![Animated demo](./image.svg)
+
 **Demo active on(require groq key or password): https://tanchuping.github.io/LLM-Feedback-SocialMediaPushSystem/**
 ---
 

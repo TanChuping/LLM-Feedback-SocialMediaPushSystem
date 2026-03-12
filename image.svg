@@ -1,0 +1,309 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-80 -30 660 760" width="660" height="760">
+  <defs>
+    <style>
+      @keyframes tremor {
+        0%   { transform: translate(250px,145px) rotate(0deg); }
+        10%  { transform: translate(252px,144px) rotate(0.8deg); }
+        20%  { transform: translate(248px,146px) rotate(-0.6deg); }
+        30%  { transform: translate(251px,143px) rotate(0.4deg); }
+        40%  { transform: translate(249px,147px) rotate(-0.9deg); }
+        50%  { transform: translate(253px,145px) rotate(0.7deg); }
+        60%  { transform: translate(247px,144px) rotate(-0.5deg); }
+        70%  { transform: translate(250px,147px) rotate(0.3deg); }
+        80%  { transform: translate(252px,143px) rotate(-0.8deg); }
+        90%  { transform: translate(248px,146px) rotate(0.6deg); }
+        100% { transform: translate(250px,145px) rotate(0deg); }
+      }
+      .cloud-group { animation: tremor 0.3s infinite ease-in-out; }
+
+      @keyframes eyeShake {
+        0%, 100% { transform: translate(0,0); }
+        25% { transform: translate(-2px,1px); }
+        50% { transform: translate(1px,-1px); }
+        75% { transform: translate(-1px,-1px); }
+      }
+      .eyes { animation: eyeShake 0.2s infinite; }
+
+      @keyframes suck1 {
+        0%   { transform: translate(30px,560px) scale(1.4) rotate(-15deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(200deg); opacity:0; }
+      }
+      @keyframes suck2 {
+        0%   { transform: translate(470px,550px) scale(1.5) rotate(20deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-180deg); opacity:0; }
+      }
+      @keyframes suck3 {
+        0%   { transform: translate(120px,590px) scale(1.3) rotate(10deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(150deg); opacity:0; }
+      }
+      @keyframes suck4 {
+        0%   { transform: translate(380px,600px) scale(1.6) rotate(-25deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-220deg); opacity:0; }
+      }
+      @keyframes suck5 {
+        0%   { transform: translate(250px,610px) scale(1.3) rotate(5deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(300deg); opacity:0; }
+      }
+      @keyframes suck6 {
+        0%   { transform: translate(10px,530px) scale(1.2) rotate(30deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-160deg); opacity:0; }
+      }
+      @keyframes suck7 {
+        0%   { transform: translate(490px,590px) scale(1.4) rotate(-40deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(250deg); opacity:0; }
+      }
+      @keyframes suck8 {
+        0%   { transform: translate(80px,620px) scale(1.5) rotate(15deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-300deg); opacity:0; }
+      }
+      @keyframes suck9 {
+        0%   { transform: translate(420px,540px) scale(1.3) rotate(-10deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(180deg); opacity:0; }
+      }
+      @keyframes suck10 {
+        0%   { transform: translate(180px,580px) scale(1.45) rotate(35deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-250deg); opacity:0; }
+      }
+      @keyframes suck11 {
+        0%   { transform: translate(320px,570px) scale(1.35) rotate(-50deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(270deg); opacity:0; }
+      }
+      @keyframes suck12 {
+        0%   { transform: translate(60px,600px) scale(1.55) rotate(45deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-190deg); opacity:0; }
+      }
+      @keyframes suck13 {
+        0%   { transform: translate(440px,620px) scale(1.25) rotate(-35deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(210deg); opacity:0; }
+      }
+      @keyframes suck14 {
+        0%   { transform: translate(150px,545px) scale(1.4) rotate(55deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-280deg); opacity:0; }
+      }
+      @keyframes suck15 {
+        0%   { transform: translate(350px,560px) scale(1.6) rotate(-5deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(160deg); opacity:0; }
+      }
+      @keyframes suck16 {
+        0%   { transform: translate(250px,630px) scale(1.3) rotate(25deg); opacity:0; }
+        8%   { opacity:1; } 75% { opacity:1; }
+        100% { transform: translate(250px,390px) scale(0.05) rotate(-340deg); opacity:0; }
+      }
+
+      .s1  { animation: suck1  1.8s infinite ease-in; animation-delay:0s; }
+      .s2  { animation: suck2  2.0s infinite ease-in; animation-delay:0.3s; }
+      .s3  { animation: suck3  2.2s infinite ease-in; animation-delay:0.6s; }
+      .s4  { animation: suck4  1.9s infinite ease-in; animation-delay:0.15s; }
+      .s5  { animation: suck5  2.1s infinite ease-in; animation-delay:0.45s; }
+      .s6  { animation: suck6  1.7s infinite ease-in; animation-delay:0.75s; }
+      .s7  { animation: suck7  2.3s infinite ease-in; animation-delay:0.9s; }
+      .s8  { animation: suck8  1.85s infinite ease-in; animation-delay:1.1s; }
+      .s9  { animation: suck9  2.0s infinite ease-in; animation-delay:0.5s; }
+      .s10 { animation: suck10 2.15s infinite ease-in; animation-delay:1.3s; }
+      .s11 { animation: suck11 1.95s infinite ease-in; animation-delay:0.2s; }
+      .s12 { animation: suck12 2.25s infinite ease-in; animation-delay:0.65s; }
+      .s13 { animation: suck13 1.75s infinite ease-in; animation-delay:1.0s; }
+      .s14 { animation: suck14 2.05s infinite ease-in; animation-delay:0.35s; }
+      .s15 { animation: suck15 1.9s infinite ease-in; animation-delay:0.85s; }
+      .s16 { animation: suck16 2.3s infinite ease-in; animation-delay:1.15s; }
+
+      @keyframes debris1 {
+        0%, 100% { transform: translate(105px,175px) scale(1); opacity:0.9; }
+        50% { transform: translate(92px,162px) scale(1.2); opacity:1; }
+      }
+      @keyframes debris2 {
+        0%, 100% { transform: translate(395px,170px) scale(1); opacity:0.9; }
+        50% { transform: translate(408px,157px) scale(1.25); opacity:1; }
+      }
+      @keyframes debris3 {
+        0%, 100% { transform: translate(120px,115px) scale(1); opacity:0.8; }
+        50% { transform: translate(108px,103px) scale(1.15); opacity:1; }
+      }
+      @keyframes debris4 {
+        0%, 100% { transform: translate(380px,108px) scale(1); opacity:0.85; }
+        50% { transform: translate(392px,96px) scale(1.18); opacity:1; }
+      }
+      .d1 { animation: debris1 0.6s infinite ease-in-out; }
+      .d2 { animation: debris2 0.5s infinite ease-in-out; }
+      .d3 { animation: debris3 0.7s infinite ease-in-out; }
+      .d4 { animation: debris4 0.55s infinite ease-in-out; }
+    </style>
+  </defs>
+
+  <!-- 脑壳 -->
+  <path d="M105,280 C105,440 160,510 250,510 C340,510 395,440 395,280
+           L375,200 L345,220 L310,185 L270,215 L230,185 L195,220 L165,195 L135,215 Z"
+        fill="#FFD54F" stroke="#4E342E" stroke-width="7" stroke-linejoin="round"/>
+
+  <!-- 裂纹 -->
+  <line x1="165" y1="195" x2="175" y2="245" stroke="#4E342E" stroke-width="3" stroke-linecap="round"/>
+  <line x1="195" y1="220" x2="188" y2="260" stroke="#4E342E" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="310" y1="185" x2="320" y2="235" stroke="#4E342E" stroke-width="3" stroke-linecap="round"/>
+  <line x1="345" y1="220" x2="335" y2="255" stroke="#4E342E" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="230" y1="185" x2="225" y2="230" stroke="#4E342E" stroke-width="2" stroke-linecap="round"/>
+  <line x1="270" y1="215" x2="278" y2="248" stroke="#4E342E" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- 眼睛 -->
+  <g class="eyes">
+    <ellipse cx="200" cy="295" rx="22" ry="28" fill="#3E2723"/>
+    <ellipse cx="205" cy="287" rx="6" ry="8" fill="#fff" opacity="0.35"/>
+    <ellipse cx="300" cy="295" rx="22" ry="28" fill="#3E2723"/>
+    <ellipse cx="305" cy="287" rx="6" ry="8" fill="#fff" opacity="0.35"/>
+  </g>
+
+  <!-- 嘴巴 -->
+  <ellipse cx="250" cy="405" rx="95" ry="72" fill="#2D1B11" stroke="#4E342E" stroke-width="6"/>
+  <ellipse cx="250" cy="385" rx="40" ry="25" fill="#1A0E08"/>
+  <path d="M180,435 C200,462 300,462 320,435 C310,452 190,452 180,435 Z" fill="#E64A19" stroke="#4E342E" stroke-width="3"/>
+
+  <!-- 蘑菇云 -->
+  <g class="cloud-group" transform="translate(250,145)">
+    <path d="M-28,30 L-40,-25 L40,-25 L28,30 Z" fill="#A1887F" stroke="#4E342E" stroke-width="5" stroke-linejoin="round"/>
+    <line x1="-8" y1="28" x2="-18" y2="-20" stroke="#4E342E" stroke-width="2.5" stroke-linecap="round" opacity="0.35"/>
+    <line x1="8" y1="28" x2="18" y2="-20" stroke="#4E342E" stroke-width="2.5" stroke-linecap="round" opacity="0.35"/>
+    <path d="M-105,-15 C-125,-15 -135,-55 -105,-70 C-100,-105 -55,-115 -25,-100
+             C-5,-125 45,-125 65,-100 C95,-115 135,-85 125,-60 C145,-35 115,-15 95,-15 Z"
+          fill="#FFD54F" stroke="#4E342E" stroke-width="6" stroke-linejoin="round"/>
+    <ellipse cx="0" cy="-105" rx="45" ry="25" fill="#FFCA28" stroke="#4E342E" stroke-width="5"/>
+    <ellipse cx="-50" cy="-75" rx="25" ry="18" fill="#FFD54F" stroke="#4E342E" stroke-width="4"/>
+    <ellipse cx="55" cy="-78" rx="28" ry="18" fill="#FFD54F" stroke="#4E342E" stroke-width="4"/>
+    <path d="M-80,-25 C-60,-45 -30,-50 -10,-35" fill="none" stroke="#FFECB3" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+    <path d="M15,-65 C35,-75 65,-70 75,-50" fill="none" stroke="#FFECB3" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+    <path d="M-55,-70 C-35,-85 5,-85 25,-70" fill="none" stroke="#FFF176" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+  </g>
+
+  <!-- 碎片 -->
+  <ellipse class="d1" cx="0" cy="0" rx="12" ry="9" fill="#E65100" stroke="#4E342E" stroke-width="4" transform="translate(105,175)"/>
+  <ellipse class="d2" cx="0" cy="0" rx="10" ry="13" fill="#FF8F00" stroke="#4E342E" stroke-width="4" transform="translate(395,170)"/>
+  <circle class="d3" cx="0" cy="0" r="8" fill="#D84315" stroke="#4E342E" stroke-width="3" transform="translate(120,115)"/>
+  <circle class="d4" cx="0" cy="0" r="6" fill="#FF6F00" stroke="#4E342E" stroke-width="3" transform="translate(380,108)"/>
+  <circle cx="100" cy="90" r="5" fill="#EF6C00" stroke="#4E342E" stroke-width="2.5" opacity="0.7"/>
+  <circle cx="400" cy="80" r="4" fill="#F57C00" stroke="#4E342E" stroke-width="2.5" opacity="0.7"/>
+
+  <!-- 1: YouTube -->
+  <g class="s1" opacity="0">
+    <rect x="-30" y="-22" width="60" height="44" rx="10" fill="#FF0000" stroke="#4E342E" stroke-width="3"/>
+    <polygon points="-8,-11 14,0 -8,11" fill="#fff"/>
+  </g>
+
+  <!-- 2: Facebook -->
+  <g class="s2" opacity="0">
+    <rect x="-24" y="-24" width="48" height="48" rx="8" fill="#1877F2" stroke="#4E342E" stroke-width="3"/>
+    <text x="0" y="11" font-family="Arial,sans-serif" font-weight="bold" font-size="36" fill="#fff" text-anchor="middle">f</text>
+  </g>
+
+  <!-- 3: Instagram -->
+  <g class="s3" opacity="0">
+    <rect x="-26" y="-26" width="52" height="52" rx="15" fill="#E4405F" stroke="#4E342E" stroke-width="3"/>
+    <circle cx="0" cy="0" r="12" fill="none" stroke="#fff" stroke-width="3.5"/>
+    <circle cx="14" cy="-14" r="3.5" fill="#fff"/>
+  </g>
+
+  <!-- 4: X/Twitter -->
+  <g class="s4" opacity="0">
+    <rect x="-24" y="-24" width="48" height="48" rx="8" fill="#000" stroke="#4E342E" stroke-width="3"/>
+    <path d="M-10,-10 L10,10 M10,-10 L-10,10" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- 5: TikTok -->
+  <g class="s5" opacity="0">
+    <rect x="-24" y="-24" width="48" height="48" rx="8" fill="#010101" stroke="#4E342E" stroke-width="3"/>
+    <path d="M3,-14 L3,8 C3,16 -11,18 -11,10 C-11,3 3,3 3,8" fill="none" stroke="#25F4EE" stroke-width="4" stroke-linecap="round"/>
+    <path d="M5,-14 C10,-11 16,-8 19,-14" fill="none" stroke="#FE2C55" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- 6: Reddit -->
+  <g class="s6" opacity="0">
+    <circle cx="0" cy="0" r="25" fill="#FF4500" stroke="#4E342E" stroke-width="3"/>
+    <circle cx="-8" cy="-3" r="4" fill="#fff"/>
+    <circle cx="8" cy="-3" r="4" fill="#fff"/>
+    <path d="M-9,6 C-4,13 4,13 9,6" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <!-- 7: 新闻 -->
+  <g class="s7" opacity="0">
+    <rect x="-26" y="-20" width="52" height="40" rx="5" fill="#F5F5DC" stroke="#4E342E" stroke-width="3"/>
+    <line x1="-18" y1="-10" x2="18" y2="-10" stroke="#4E342E" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="-18" y1="-2" x2="18" y2="-2" stroke="#999" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="-18" y1="6" x2="8" y2="6" stroke="#999" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="-18" y1="13" x2="14" y2="13" stroke="#999" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- 8: Snapchat -->
+  <g class="s8" opacity="0">
+    <rect x="-24" y="-24" width="48" height="48" rx="8" fill="#FFFC00" stroke="#4E342E" stroke-width="3"/>
+    <path d="M0,-11 C-13,-11 -16,0 -16,5 L-21,5 L-16,8 C-18,13 -11,16 0,16 C11,16 18,13 16,8 L21,5 L16,5 C16,0 13,-11 0,-11 Z" fill="#fff" stroke="#333" stroke-width="2"/>
+  </g>
+
+  <!-- 9: 爱心 -->
+  <g class="s9" opacity="0">
+    <circle cx="0" cy="0" r="25" fill="#1877F2" stroke="#4E342E" stroke-width="3"/>
+    <path d="M0,13 C-18,-3 -18,-13 -8,-13 C-3,-13 0,-8 0,-8 C0,-8 3,-13 8,-13 C18,-13 18,-3 0,13 Z" fill="#fff"/>
+  </g>
+
+  <!-- 10: 铃铛 -->
+  <g class="s10" opacity="0">
+    <rect x="-24" y="-24" width="48" height="48" rx="10" fill="#FF9800" stroke="#4E342E" stroke-width="3"/>
+    <path d="M0,-14 C-11,-14 -14,-3 -14,3 L-16,8 L16,8 L14,3 C14,-3 11,-14 0,-14 Z" fill="#fff"/>
+    <rect x="-16" y="8" width="32" height="4" rx="2" fill="#fff"/>
+    <circle cx="0" cy="15" r="4" fill="#fff"/>
+  </g>
+
+  <!-- 11: WhatsApp -->
+  <g class="s11" opacity="0">
+    <circle cx="0" cy="0" r="25" fill="#25D366" stroke="#4E342E" stroke-width="3"/>
+    <path d="M-7,12 C-14,7 -14,-7 -7,-11 C0,-16 11,-14 12,-7 C14,0 11,7 7,11 L8,17 Z" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 12: LinkedIn -->
+  <g class="s12" opacity="0">
+    <rect x="-24" y="-24" width="48" height="48" rx="7" fill="#0A66C2" stroke="#4E342E" stroke-width="3"/>
+    <text x="-9" y="10" font-family="Arial,sans-serif" font-weight="bold" font-size="28" fill="#fff">in</text>
+  </g>
+
+  <!-- 13: Twitch -->
+  <g class="s13" opacity="0">
+    <rect x="-24" y="-24" width="48" height="48" rx="8" fill="#9146FF" stroke="#4E342E" stroke-width="3"/>
+    <path d="M-11,-14 L-11,8 L-3,16 L5,16 L13,8 L13,-14 Z" fill="#fff"/>
+    <rect x="-3" y="-7" width="4" height="11" fill="#9146FF"/>
+    <rect x="5" y="-7" width="4" height="11" fill="#9146FF"/>
+  </g>
+
+  <!-- 14: Spotify -->
+  <g class="s14" opacity="0">
+    <circle cx="0" cy="0" r="25" fill="#1DB954" stroke="#4E342E" stroke-width="3"/>
+    <path d="M-14,-6 C-3,-11 14,-8 16,-3" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M-11,3 C-3,-1 11,0 13,4" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M-8,10 C-2,7 8,8 11,11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <!-- 15: Discord -->
+  <g class="s15" opacity="0">
+    <rect x="-26" y="-20" width="52" height="40" rx="10" fill="#5865F2" stroke="#4E342E" stroke-width="3"/>
+    <circle cx="-8" cy="0" r="5.5" fill="#fff"/>
+    <circle cx="8" cy="0" r="5.5" fill="#fff"/>
+    <path d="M-14,-10 C-8,-16 8,-16 14,-10" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <!-- 16: Pinterest -->
+  <g class="s16" opacity="0">
+    <circle cx="0" cy="0" r="25" fill="#E60023" stroke="#4E342E" stroke-width="3"/>
+    <text x="0" y="12" font-family="Georgia,serif" font-weight="bold" font-size="36" fill="#fff" text-anchor="middle">P</text>
+  </g>
+
+</svg>

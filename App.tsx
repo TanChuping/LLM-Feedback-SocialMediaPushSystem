@@ -13,6 +13,7 @@ import { LiquidGlassBackground } from './components/LiquidGlassBackground';
 import { t } from './i18n';
 import { ArrowUp, Key, Check, RefreshCcw, ArrowLeft, ArrowRight, Menu, X, Sparkles, BrainCircuit, Zap, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import animatedHeaderIcon from './image.svg';
 
 const ITEMS_PER_PAGE = 30;
 const MAX_TAG_WEIGHT = 40;
@@ -1654,12 +1655,20 @@ const App: React.FC = () => {
           {/* Feed Column */}
           <div className="lg:col-span-7 xl:col-span-7 pb-20 md:pb-10 pt-2 px-1">
             <div className={`hidden lg:flex items-center justify-between mb-6 bg-white/60 backdrop-blur-xl p-4 rounded-[24px] shadow-sm border border-white/40 sticky top-6 ${showOnboarding ? 'z-50 relative' : 'z-30'}`}>
-              <div>
-                <h1 className="text-2xl font-extrabold tracking-tight text-gray-900 drop-shadow-sm flex items-center gap-2">
-                  <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="NeuroFeed" className="w-8 h-8" />
+              <div className="flex items-center gap-4 min-w-0">
+                <div className="-my-4 -ml-1 flex items-center self-stretch">
+                  <img
+                    src={animatedHeaderIcon}
+                    alt="NeuroFeed"
+                    className="w-16 h-16 shrink-0"
+                  />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-extrabold tracking-tight text-gray-900 drop-shadow-sm">
                   Your Feed
-                </h1>
-                <p className="text-xs text-gray-600 mt-0.5">AI-Curated • Page {currentPage} of {totalPages}</p>
+                  </h1>
+                  <p className="text-xs text-gray-600 mt-0.5">AI-Curated • Page {currentPage} of {totalPages}</p>
+                </div>
               </div>
               
               <div className="flex gap-3 items-center">
