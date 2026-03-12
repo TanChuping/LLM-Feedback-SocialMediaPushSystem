@@ -6,7 +6,7 @@
 
 This repository reflects an ongoing learning process rather than a finished system. Design choices are intentionally simple, explicit, and sometimes imperfect, with the goal of understanding engineering trade-offs rather than maximizing performance.
 ---
-
+---
 <img src="./image.svg" alt="Animated demo" width="200" />
 ---
 
