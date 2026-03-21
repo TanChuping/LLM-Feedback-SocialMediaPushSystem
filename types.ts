@@ -67,6 +67,33 @@ export interface FeedbackAnalysisResult {
   preference_targets?: PreferenceTarget[]; // NEW: explicit targets (entity/aspect/topic) to avoid collateral damage
 }
 
+export interface FeedbackMemoryEntry {
+  id: string;
+  timestamp: number;
+  rawFeedback: string;
+  targetPostTitle: string;
+  targetPostId: string;
+  adjustments: TagAdjustment[];
+  dislikeScope: 'topic' | 'aspect';
+  userNote: string;
+  explicitSearchQuery: string | null;
+  softDownrankQuery: string | null;
+  preferenceTargets: PreferenceTarget[];
+  profileSnapshotAfter: {
+    topInterests: Array<{ tag: string; weight: number }>;
+    topDislikes: Array<{ tag: string; weight: number }>;
+  };
+  personaSummary: string | null;
+  searchableText: string;
+  ragRetrievals: Array<{
+    timestamp: number;
+    queryTerms: string[];
+    matchedTerms: string[];
+    score: number;
+    source: string; // e.g. 'stage2_user_feedback', 'stage2_persona_refine'
+  }>;
+}
+
 export interface UserPersona {
   description: string;  // 文字描述的用户画像（legacy / fallback）
   descriptionEn?: string;

@@ -4,7 +4,8 @@ import { getCombinationsForEmoji, getCombinationsListForPrompt, getFusionUrl } f
 
 // Groq Configuration
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = "llama-3.3-70b-versatile"; 
+const MODEL_STRONG = "openai/gpt-oss-120b";  // Stage 1 (intent analysis), Stage 2 (rerank)
+const MODEL_FAST   = "openai/gpt-oss-20b";   // Stage 3, 4a, 4b, nickname, emoji
 const DEFAULT_KEY = " ";
 
 /**
@@ -16,7 +17,7 @@ async function callGroqWithRetry(
   tag: string,
   jsonMode: boolean = true,
   retries: number = 3,
-  options?: { temperature?: number; maxTokens?: number }
+  options?: { temperature?: number; maxTokens?: number; model?: string }
 ): Promise<any> {
   const effectiveKey = apiKey || DEFAULT_KEY;
 
@@ -42,10 +43,10 @@ async function callGroqWithRetry(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: GROQ_MODEL,
+          model: options?.model || MODEL_STRONG,
           messages: messages,
           temperature: options?.temperature ?? 0.1,
-          max_tokens: options?.maxTokens ?? 2048, // default 2048 avoids truncation for long prompts
+          max_tokens: options?.maxTokens ?? 2048,
           response_format: jsonMode ? { type: "json_object" } : undefined,
         }),
       });
@@ -159,8 +160,6 @@ export const analyzeFeedback = async (
     You are a Precision Recommendation Tuner. 
     Your goal is to parse user feedback and output specific, *weighted* adjustments to their profile tags.
 
-    VOCABULARY_SAMPLE: ["${vocabularyList}"]
-
     CRITICAL INSTRUCTIONS:
     1. **HIERARCHY IS KING**: 
        - **PRIMARY Signal (The core topic/intent):** Delta 6 to 9.
@@ -272,6 +271,8 @@ export const analyzeFeedback = async (
   `;
 
   const userPrompt = `
+    VOCABULARY_SAMPLE: ["${vocabularyList}"]
+
     CONTENT_CONTEXT: "${contentContext}"
     CURRENT_PROFILE: 
       - LIKES: [${profileInterests || "(empty - new user or profile reset)"}]
@@ -426,9 +427,7 @@ export const rerankFeed = async (
 
   const systemPrompt = `
     You are a ranking engine. Re-order the provided posts based on the User's Profile and Explicit Request.
-    
-    USER PROFILE TOP INTERESTS: ${topInterests}
-    You will also receive CURRENT_CONTEXT (recent feedback + persona signals + avoid instructions).
+    You will also receive USER PROFILE TOP INTERESTS, CURRENT_CONTEXT (recent feedback + persona signals + avoid instructions), and CANDIDATE POSTS.
 
     CONTEXT:
     The candidate list provided may be a MIX of:
@@ -449,8 +448,10 @@ export const rerankFeed = async (
        - If red_flags contain patterns like "likes X but hates Y", treat Y as the exception (downrank Y) while keeping X high.
        - TOP10 GUARDRAIL (must follow):
          Any post that matches HARD_AVOID_POST_IDS, ENTITY_DISLIKES, or PERSONA_SIGNALS.red_flag_keywords MUST NOT appear in the first 10 results.
-    4. Output strictly a JSON object: { "ids": ["id1", "id2", ...] }.
-    5. Include ALL provided IDs.
+    4. If CURRENT_CONTEXT contains PERSONA_SUMMARY (a holistic text description of the user), use it to better understand the user's overall personality, preferences, and sensitivities. Use it to refine ordering when structured signals alone are ambiguous.
+    5. If CURRENT_CONTEXT contains FEEDBACK_EXCERPTS (raw user feedback retrieved by keyword match), use them as ground-truth evidence to resolve ambiguity in PERSONA_SUMMARY or PERSONA_SIGNALS. These are the user's actual words — trust them over inferred signals when they conflict.
+    6. Output strictly a JSON object: { "ids": ["id1", "id2", ...] }.
+    7. Include ALL provided IDs.
   `;
 
   try {
@@ -458,7 +459,7 @@ export const rerankFeed = async (
       providedKey,
       [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `CURRENT_CONTEXT:\n${explicitIntent || '(none)'}\n\nCANDIDATE POSTS (Mix of Algo & Search):\n${candidates}` }
+        { role: "user", content: `USER PROFILE TOP INTERESTS: ${topInterests}\n\nCURRENT_CONTEXT:\n${explicitIntent || '(none)'}\n\nCANDIDATE POSTS (Mix of Algo & Search):\n${candidates}` }
       ],
       "Rerank"
     );
@@ -526,12 +527,6 @@ export const pruneUserProfile = async (
     You are a profile maintenance garbage collector.
     Your job is to identify "Decay" (negative delta) for tags by analyzing the User's FEEDBACK HISTORY against their CURRENT TAGS.
 
-    CURRENT TAGS: [${currentTags}]
-    LATEST FEEDBACK: "${latestFeedback}"
-    FULL FEEDBACK HISTORY: "${historyStr}"
-    RECENTLY_BOOSTED_TAGS: "${recentlyBoosted || '(none)'}"
-    FEEDBACK COUNT: ${history.length}
-
     OUTPUT JSON: { "decay": [{ "tag": string, "delta": number }], "reason": string }
     
     CRITICAL RULES:
@@ -560,14 +555,27 @@ export const pruneUserProfile = async (
     6. **NO FORCED DECAY**: If you cannot confidently find irrelevant/contradicted tags, output an empty decay list.
   `;
 
+  const userPrompt = `
+    CURRENT TAGS: [${currentTags}]
+    LATEST FEEDBACK: "${latestFeedback}"
+    FULL FEEDBACK HISTORY: "${historyStr}"
+    RECENTLY_BOOSTED_TAGS: "${recentlyBoosted || '(none)'}"
+    FEEDBACK COUNT: ${history.length}
+
+    Analyze profile history and output decay adjustments.
+  `;
+
   try {
     const result = await callGroqWithRetry(
       providedKey,
       [
         { role: "system", content: systemPrompt },
-        { role: "user", content: "Analyze profile history and output decay adjustments." }
+        { role: "user", content: userPrompt }
       ],
-      "Prune"
+      "Prune",
+      true,
+      3,
+      { model: MODEL_FAST }
     );
 
     console.log(`[pruneUserProfile] LLM raw response:`, {
@@ -648,6 +656,7 @@ export const generateUserNickname = async (
       "UserNickname",
       true,
       3,
+      { model: MODEL_FAST }
     );
 
     // 验证并清理名字（英文<=3词，中文<=6字）
@@ -706,7 +715,7 @@ export const generateUserPersonaSignals = async (
       'STAGE4A_PERSONA_SIGNALS',
       true,
       2,
-      { temperature: 0.1, maxTokens: 512 }
+      { temperature: 0.1, maxTokens: 512, model: MODEL_STRONG }
     );
 
     const toStringArray = (v: any): string[] => {
@@ -836,8 +845,9 @@ export const generateUserPersonaDescription = async (
         { role: "user", content: userPrompt }
       ],
       "PersonaDescription",
-      true, // jsonMode
-      3,    // retries
+      true,
+      3,
+      { model: MODEL_FAST }
     );
 
     const toStringArray = (v: any): string[] => {
@@ -1023,7 +1033,7 @@ export const generateEmojiFusion = async (
   const mainEmojiCandidates = [...priorityEmojis, ...otherEmojis].slice(0, 200).join(' ');
 
   // 优化后的 prompt，更明确地强调要根据反馈内容选择（友好、无冒犯）
-  const systemPrompt = `选择一个主 emoji，表达用户当前的兴趣或情绪。从候选列表选一个：${mainEmojiCandidates}
+    const systemPrompt = `选择一个主 emoji，表达用户当前的兴趣或情绪。从候选列表中选一个。
 
 规则映射（根据反馈内容选择）：
 - 食物/想吃/饿了 → 🍕🍔🍟🌮🌯🍗🍜🍣
@@ -1045,7 +1055,9 @@ export const generateEmojiFusion = async (
 3. 保持多样化，避免总是相同选择
 4. 选择的 emoji 必须在候选列表中，语气轻松友好
 
-输出JSON: { "mainEmoji": "emoji字符" }`;
+输出JSON: { "mainEmoji": "emoji字符" }
+
+候选列表：${mainEmojiCandidates}`;
 
   // 限制反馈历史长度，但确保最新反馈完整
   const limitedHistory = recentHistory.length > 800 
@@ -1072,6 +1084,7 @@ export const generateEmojiFusion = async (
       "EmojiFusionStep1",
       true,
       3,
+      { model: MODEL_FAST }
     );
 
     const mainEmoji = step1Result.mainEmoji || '';
@@ -1147,6 +1160,7 @@ ${limitedCombinationsList}
       "EmojiFusionStep2",
       true,
       3,
+      { model: MODEL_FAST }
     );
 
     // 解析选择的组合（支持多种格式）

@@ -22,7 +22,12 @@ type UiKey =
   | 'interestLabel'
   | 'negativeLabel'
   | 'waitingForInteraction'
-  | 'defaultPersonaDescription';
+  | 'defaultPersonaDescription'
+  | 'feedbackMemory'
+  | 'feedbackMemoryEmpty'
+  | 'awaitingPersona'
+  | 'viewAlgoLog'
+  | 'viewMemory';
 
 const DICT: Record<Language, Record<UiKey, string>> = {
   en: {
@@ -47,7 +52,12 @@ const DICT: Record<Language, Record<UiKey, string>> = {
     interestLabel: 'Interest',
     negativeLabel: 'Negative',
     waitingForInteraction: 'Waiting for interaction...',
-    defaultPersonaDescription: 'New user — waiting for more feedback to build a persona...'
+    defaultPersonaDescription: 'New user — waiting for more feedback to build a persona...',
+    feedbackMemory: 'Feedback Memory',
+    feedbackMemoryEmpty: 'No feedback recorded yet...',
+    awaitingPersona: '(awaiting persona...)',
+    viewAlgoLog: 'Events',
+    viewMemory: 'Memory'
   },
   zh: {
     refineBannerRefinedSort: '已为你细化排序',
@@ -71,7 +81,12 @@ const DICT: Record<Language, Record<UiKey, string>> = {
     interestLabel: '兴趣',
     negativeLabel: '负向',
     waitingForInteraction: '等待交互…',
-    defaultPersonaDescription: '新用户，等待更多反馈来描绘画像...'
+    defaultPersonaDescription: '新用户，等待更多反馈来描绘画像...',
+    feedbackMemory: '反馈记忆',
+    feedbackMemoryEmpty: '暂无反馈记录…',
+    awaitingPersona: '（画像生成中…）',
+    viewAlgoLog: '事件',
+    viewMemory: '记忆'
   }
 };
 

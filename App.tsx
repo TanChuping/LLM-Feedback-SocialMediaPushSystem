@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Post, UserProfile, SystemLog, WeightedTag, UserPersona } from './types';
+import { Post, UserProfile, SystemLog, WeightedTag, UserPersona, FeedbackMemoryEntry } from './types';
 import { INITIAL_USER_PROFILE, MOCK_POSTS, ALL_TAGS } from './constants';
 import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2'; 
 import { ADDITIONAL_POSTS_3, PET_AND_ENT_TAGS } from './constants3'; 
@@ -74,6 +74,11 @@ const App: React.FC = () => {
   // New: Track history for background cleanup context
   const [feedbackHistory, setFeedbackHistory] = useState<string[]>([]);
 
+  // Feedback Memory: structured log for UI + future pseudo-RAG retrieval
+  const [feedbackMemory, setFeedbackMemory] = useState<FeedbackMemoryEntry[]>([]);
+  const feedbackMemoryRef = useRef<FeedbackMemoryEntry[]>([]);
+  useEffect(() => { feedbackMemoryRef.current = feedbackMemory; }, [feedbackMemory]);
+
   // New: "Aspect-level" avoid rules (do not kill topic tags; downrank matching posts instead)
   const [softDownrankRules, setSoftDownrankRules] = useState<SoftDownrankRule[]>([]);
   const softDownrankRulesRef = useRef<SoftDownrankRule[]>([]);
@@ -137,6 +142,7 @@ const App: React.FC = () => {
   const [isStage2Loading, setIsStage2Loading] = useState(false); // Background LLM
   const [pendingSmartFeed, setPendingSmartFeed] = useState<{posts: Post[], history: string[], profile: UserProfile} | null>(null); // Store LLM result waiting for user
   const personaRefineRunIdRef = useRef<string | null>(null);
+  const lastFeedbackAppliedAtRef = useRef<number>(0); // timestamp when the most recent user_feedback Stage 2 was applied
   const refineBannerTimeoutRef = useRef<number | null>(null);
   const [refineBannerMessage, setRefineBannerMessage] = useState<string | null>(null);
   const [hardAvoidPosts, setHardAvoidPosts] = useState<Array<{ id: string; title: string; reason: string; createdAt: number }>>([]);
@@ -272,6 +278,73 @@ const App: React.FC = () => {
     return `${raw} ${additions.join(' ')}`.trim();
   };
 
+  // Pseudo-RAG: keyword-match feedbackMemory entries against a set of query terms.
+  // Returns up to maxEntries relevant excerpts for Stage 2 disambiguation.
+  // Also records retrieval events back into the matched memory entries.
+  const retrieveRelevantFeedback = (
+    queryTerms: string[],
+    maxEntries: number = 3,
+    source: string = 'stage2',
+    skipRecord: boolean = false
+  ): Array<{ rawFeedback: string; targetPost: string; userNote: string; entityDislikes: string[]; memoryId: string; score: number; matchedTerms: string[] }> => {
+    const mem = feedbackMemoryRef.current || [];
+    if (mem.length === 0 || queryTerms.length === 0) return [];
+
+    const terms = queryTerms.map(t => t.toLowerCase()).filter(t => t.length > 0);
+    const scored: Array<{ entry: typeof mem[0]; score: number; matchedTerms: string[] }> = [];
+
+    for (const entry of mem) {
+      const haystack = entry.searchableText.toLowerCase();
+      let score = 0;
+      const matched: Set<string> = new Set();
+      for (const term of terms) {
+        if (haystack.includes(term)) { score += 1; matched.add(term); }
+      }
+      for (const pt of (entry.preferenceTargets || [])) {
+        if (pt.polarity === 'dislike' && pt.value) {
+          for (const term of terms) {
+            if (pt.value.toLowerCase().includes(term) || term.includes(pt.value.toLowerCase())) { score += 2; matched.add(term); }
+          }
+        }
+      }
+      if (score > 0) scored.push({ entry, score, matchedTerms: Array.from(matched) });
+    }
+
+    const results = scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxEntries);
+
+    // Record retrieval events into matched memory entries (skip for persona_refine to avoid duplicate noise)
+    if (results.length > 0 && !skipRecord) {
+      const now = Date.now();
+      setFeedbackMemory(prev => {
+        const updated = [...prev];
+        for (const { entry, matchedTerms, score } of results) {
+          const idx = updated.findIndex(e => e.id === entry.id);
+          if (idx !== -1) {
+            updated[idx] = {
+              ...updated[idx],
+              ragRetrievals: [...(updated[idx].ragRetrievals || []), { timestamp: now, queryTerms: terms, matchedTerms, score, source }].slice(-10)
+            };
+          }
+        }
+        return updated;
+      });
+    }
+
+    return results.map(({ entry, score, matchedTerms }) => ({
+      rawFeedback: entry.rawFeedback.slice(0, 200),
+      targetPost: entry.targetPostTitle.slice(0, 80),
+      userNote: (entry.userNote || '').slice(0, 150),
+      entityDislikes: (entry.preferenceTargets || [])
+        .filter(pt => pt.polarity === 'dislike')
+        .map(pt => `${pt.value} (${pt.type}, strength ${pt.strength})`),
+      memoryId: entry.id,
+      score,
+      matchedTerms
+    }));
+  };
+
   const buildStage2Context = (args: {
     feedbackText?: string;
     analysisNote?: string;
@@ -288,6 +361,32 @@ const App: React.FC = () => {
     const hardAvoid = (args.hardAvoid || hardAvoidPostsRef.current || []).slice(0, 5);
     const entityDislikes = (entityDislikesRef.current || []).slice(0, 5).map(x => ({ value: x.value, strength: x.strength }));
     const aspectDislikes = (aspectDislikesRef.current || []).slice(0, 5).map(x => ({ value: x.value, strength: x.strength }));
+
+    // Pseudo-RAG: retrieve raw feedback excerpts matching red_flag_keywords / entity dislikes
+    // Only activate when we have enough memory to make retrieval meaningful (>= 3 entries).
+    const mem = feedbackMemoryRef.current || [];
+    const ragQueryTerms = mem.length >= 3 ? [
+      ...(persona.redFlagKeywords || []),
+      ...entityDislikes.map(x => x.value),
+      ...aspectDislikes.map(x => x.value),
+    ] : [];
+    const sourceLabel = args.source || 'user_feedback';
+    const isRefineSource = sourceLabel === 'persona_refine';
+    const feedbackExcerpts = retrieveRelevantFeedback(ragQueryTerms, 3, `stage2_${sourceLabel}`, isRefineSource);
+
+    // Log pseudo-RAG retrieval to algorithm_events (skip for persona_refine to reduce noise — same data as user_feedback)
+    if (ragQueryTerms.length > 0 && !isRefineSource) {
+      addLog('RE_RANK', `Pseudo-RAG Retrieval (${sourceLabel})`, {
+        query_terms: ragQueryTerms,
+        matched_count: feedbackExcerpts.length,
+        matches: feedbackExcerpts.map(e => ({
+          target_post: e.targetPost,
+          matched_terms: e.matchedTerms,
+          score: e.score
+        })),
+        note: feedbackExcerpts.length === 0 ? 'No matching feedback found in memory' : `${feedbackExcerpts.length} excerpt(s) injected into Stage 2 context`
+      });
+    }
 
     const payload = {
       source: args.source || 'user_feedback',
@@ -315,7 +414,13 @@ const App: React.FC = () => {
         user_traits: (persona.userTraits || []).slice(0, 5),
         red_flags: (persona.redFlags || []).slice(0, 5),
         red_flag_keywords: (persona.redFlagKeywords || []).slice(0, 5)
-      }
+      },
+      PERSONA_SUMMARY: (() => {
+        const p = userPersonaRef.current;
+        const desc = (p?.descriptionEn || p?.description || '');
+        return desc.slice(0, 400) || null;
+      })(),
+      FEEDBACK_EXCERPTS: feedbackExcerpts.length > 0 ? feedbackExcerpts : null
     };
 
     return JSON.stringify(payload);
@@ -855,6 +960,29 @@ const App: React.FC = () => {
       });
     }
 
+    // Record structured feedback memory entry (for UI + future pseudo-RAG)
+    const memoryEntry: FeedbackMemoryEntry = {
+      id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: Date.now(),
+      rawFeedback: text,
+      targetPostTitle: postTitle,
+      targetPostId: post.id,
+      adjustments: Array.isArray(analysis.adjustments) ? analysis.adjustments : [],
+      dislikeScope: analysis.dislike_scope || 'aspect',
+      userNote: analysis.user_note || '',
+      explicitSearchQuery: analysis.explicit_search_query || null,
+      softDownrankQuery: analysis.soft_downrank_query || null,
+      preferenceTargets: (analysis as any).preference_targets || [],
+      profileSnapshotAfter: {
+        topInterests: updatedProfile.interests.sort((a, b) => b.weight - a.weight).slice(0, 5).map(t => ({ tag: t.tag, weight: t.weight })),
+        topDislikes: updatedProfile.dislikes.sort((a, b) => b.weight - a.weight).slice(0, 5).map(t => ({ tag: t.tag, weight: t.weight })),
+      },
+      personaSummary: null,
+      searchableText: [text, postTitle, analysis.user_note || '', ...(analysis.adjustments || []).map(a => a.tag)].join(' '),
+      ragRetrievals: [],
+    };
+    setFeedbackMemory(prev => [memoryEntry, ...prev].slice(0, 50));
+
     const explicitIntentString = buildStage2Context({
       source: 'user_feedback',
       feedbackText: text,
@@ -863,7 +991,6 @@ const App: React.FC = () => {
       softAvoidQuery: (analysis.dislike_scope === 'aspect' ? analysis.soft_downrank_query : null) || null,
       softAvoidStrength: analysis.soft_downrank_strength || 1,
       history: newHistory,
-      // persona might be one-round behind; that's fine for first pass
       personaSignals: userPersonaRef.current,
       hardAvoid: hardAvoidPostsRef.current
     });
@@ -902,6 +1029,7 @@ const App: React.FC = () => {
     setUserProfile(newRandomProfile);
     
     setFeedbackHistory([]);
+    setFeedbackMemory([]);
     setLogs([]);
     setPendingSmartFeed(null);
     setSoftDownrankRules([]);
@@ -942,11 +1070,13 @@ const App: React.FC = () => {
     newlyAddedSoftRule?: SoftDownrankRule | null,
     options?: { source?: 'user_feedback' | 'persona_refine' | string; forceAutoApply?: boolean; suppressStage3?: boolean; runId?: string }
   ) => {
-    // A. Visual Feedback
-    setIsStage1Refreshing(true); 
-    setPendingSmartFeed(null); 
-
-    await new Promise(resolve => setTimeout(resolve, 300)); 
+    // A. Visual Feedback (skip for persona_refine — it runs silently in background)
+    const isSilentRefine = options?.source === 'persona_refine';
+    if (!isSilentRefine) {
+      setIsStage1Refreshing(true); 
+      setPendingSmartFeed(null); 
+      await new Promise(resolve => setTimeout(resolve, 300)); 
+    }
 
     const profileToUse = profileOverride || userProfile;
     const rulesBase = softDownrankRulesRef.current || [];
@@ -1003,12 +1133,14 @@ const App: React.FC = () => {
     
     // For immediate display (while Stage 2 loads), we just use the Hybrid result.
     // We sort by score mainly so it looks decent before the LLM fixes it.
-    const immediateDisplay = [...hybridCandidates].sort((a,b) => (b.score || 0) - (a.score || 0));
-    setAllRankedPosts(immediateDisplay); 
-    setCurrentPage(1);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    
-    setIsStage1Refreshing(false);
+    // Skip visual override for persona_refine — user keeps seeing current content.
+    if (!isSilentRefine) {
+      const immediateDisplay = [...hybridCandidates].sort((a,b) => (b.score || 0) - (a.score || 0));
+      setAllRankedPosts(immediateDisplay); 
+      setCurrentPage(1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setIsStage1Refreshing(false);
+    }
     
     addLog('RE_RANK', 'Stage 1.5 Complete: Hybrid Retrieval', { 
       query_used: rawSearchQuery || "None (Pure Algo)",
@@ -1177,9 +1309,23 @@ const App: React.FC = () => {
     setIsStage2Loading(false); 
 
     // AUTO-APPLY LOGIC:
-    // - persona_refine: always auto-apply (per UX)
+    // - persona_refine: auto-apply UNLESS a newer user_feedback result was already applied
     // - default: auto-apply if fast (< 3000ms), otherwise wait for user
     const shouldForceAutoApply = !!options?.forceAutoApply;
+    const isRefine = options?.source === 'persona_refine';
+
+    // Guard: don't let a slow refine overwrite a more recent user_feedback result
+    if (isRefine && shouldForceAutoApply && stage2StartTime < lastFeedbackAppliedAtRef.current) {
+      addLog('RE_RANK', `Stage 2 Refine Skipped (Stale: ${stage2Duration}ms)`, {
+        reason: 'A newer user_feedback result was applied after this refine was triggered',
+        refine_triggered_at: new Date(stage2StartTime).toLocaleTimeString(),
+        feedback_applied_at: new Date(lastFeedbackAppliedAtRef.current).toLocaleTimeString(),
+        would_have_been_top: finalSmartFeed[0]?.title?.en
+      });
+      setIsStage2Loading(false);
+      return;
+    }
+
     if (shouldForceAutoApply || stage2Duration < 3000) {
       setAllRankedPosts(finalSmartFeed);
       setCurrentPage(1);
@@ -1191,6 +1337,8 @@ const App: React.FC = () => {
         top_post: finalSmartFeed[0].title.en
       });
       setPendingSmartFeed(null);
+
+      if (!isRefine) lastFeedbackAppliedAtRef.current = Date.now();
     } else {
       // D. Store result in PENDING state
       setPendingSmartFeed({
@@ -1235,38 +1383,66 @@ const App: React.FC = () => {
       // Snapshot fun-toggle per run so mid-run toggles only apply next time.
       const funEnabledThisRun = enablePersonaFunRef.current;
 
+      // Enrich history with structured entity/aspect hints from feedbackMemory
+      // so Stage 4a/4b can detect red flags even when raw text is vulgar/ambiguous.
+      const enrichedHistory = (() => {
+        const mem = feedbackMemoryRef.current || [];
+        if (mem.length === 0) return history;
+
+        const entityHints: string[] = [];
+        for (const entry of mem.slice(0, 10)) {
+          for (const pt of (entry.preferenceTargets || [])) {
+            if (pt.polarity === 'dislike' && pt.value) {
+              entityHints.push(`[${pt.type} dislike: "${pt.value}" (strength ${pt.strength}), from feedback on "${entry.targetPostTitle}"]`);
+            }
+          }
+          if (entry.softDownrankQuery) {
+            entityHints.push(`[soft downrank: "${entry.softDownrankQuery}", scope: ${entry.dislikeScope}]`);
+          }
+        }
+        if (entityHints.length === 0) return history;
+        const hintLine = `\n--- Structured Signals from Stage 1 Analysis ---\n${entityHints.join('\n')}`;
+        return [...history, hintLine];
+      })();
+
       // --- Stage 4a: fast persona signals for refine rerank ---
-      const signals = await generateUserPersonaSignals(history, apiKey);
+      const signals = await generateUserPersonaSignals(enrichedHistory, apiKey);
+      // Merge rather than overwrite: if the LLM returns empty arrays, keep previous signals.
+      // Deduplicate by using a Set on the merged result.
+      const dedup = (arr: string[]) => Array.from(new Set(arr));
       setUserPersona(prev => ({
         ...prev,
-        userTraits: signals.userTraits,
-        userTraitsZh: (signals as any).userTraitsZh || signals.userTraits,
-        userTraitsEn: (signals as any).userTraitsEn || prev.userTraitsEn,
-        redFlags: signals.redFlags,
-        redFlagsZh: (signals as any).redFlagsZh || signals.redFlags,
-        redFlagsEn: (signals as any).redFlagsEn || prev.redFlagsEn,
-        redFlagKeywords: signals.redFlagKeywords
+        userTraits: signals.userTraits.length > 0 ? dedup([...signals.userTraits, ...(prev.userTraits || [])]).slice(0, 5) : prev.userTraits,
+        userTraitsZh: signals.userTraits.length > 0 ? dedup([...((signals as any).userTraitsZh || signals.userTraits), ...(prev.userTraitsZh || [])]).slice(0, 5) : prev.userTraitsZh,
+        userTraitsEn: (signals as any).userTraitsEn?.length > 0 ? dedup([...(signals as any).userTraitsEn, ...(prev.userTraitsEn || [])]).slice(0, 5) : prev.userTraitsEn,
+        redFlags: signals.redFlags.length > 0 ? dedup([...signals.redFlags, ...(prev.redFlags || [])]).slice(0, 5) : prev.redFlags,
+        redFlagsZh: signals.redFlags.length > 0 ? dedup([...((signals as any).redFlagsZh || signals.redFlags), ...(prev.redFlagsZh || [])]).slice(0, 5) : prev.redFlagsZh,
+        redFlagsEn: (signals as any).redFlagsEn?.length > 0 ? dedup([...(signals as any).redFlagsEn, ...(prev.redFlagsEn || [])]).slice(0, 5) : prev.redFlagsEn,
+        redFlagKeywords: signals.redFlagKeywords.length > 0 ? dedup([...signals.redFlagKeywords, ...(prev.redFlagKeywords || [])]).slice(0, 5) : prev.redFlagKeywords
       }));
 
       addLog('PROFILE_UPDATE', 'User Persona Signals Updated (Stage 4a)', {
-        user_traits: signals.userTraits,
-        red_flags: signals.redFlags,
-        red_flag_keywords: signals.redFlagKeywords,
+        user_traits: signals.userTraits.length > 0 ? signals.userTraits : '(kept previous)',
+        red_flags: signals.redFlags.length > 0 ? signals.redFlags : '(kept previous)',
+        red_flag_keywords: signals.redFlagKeywords.length > 0 ? signals.redFlagKeywords : '(kept previous)',
         history_length: history.length
       });
 
       // Trigger refine Stage 2 immediately after signals are available
       const refineRunId = `persona_refine_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       personaRefineRunIdRef.current = refineRunId;
+      // Use merged signals (new + prev) for refine rerank, so empty LLM responses don't erase history
+      const prevPersona = userPersonaRef.current || {};
+      const mergedSignals = {
+        userTraits: signals.userTraits.length > 0 ? dedup([...signals.userTraits, ...(prevPersona.userTraits || [])]).slice(0, 5) : (prevPersona.userTraits || []),
+        redFlags: signals.redFlags.length > 0 ? dedup([...signals.redFlags, ...(prevPersona.redFlags || [])]).slice(0, 5) : (prevPersona.redFlags || []),
+        redFlagKeywords: signals.redFlagKeywords.length > 0 ? dedup([...signals.redFlagKeywords, ...(prevPersona.redFlagKeywords || [])]).slice(0, 5) : (prevPersona.redFlagKeywords || [])
+      };
       const refineIntentString = buildStage2Context({
         source: 'persona_refine',
         history,
         explicitSearchQuery: lastExplicitSearchRef.current?.query || null,
-        personaSignals: {
-          userTraits: signals.userTraits,
-          redFlags: signals.redFlags,
-          redFlagKeywords: signals.redFlagKeywords
-        },
+        personaSignals: mergedSignals,
         hardAvoid: hardAvoidPostsRef.current
       });
       triggerRefreshSequence(
@@ -1316,7 +1492,7 @@ const App: React.FC = () => {
       
       // 线2：生成用户画像描述（只基于反馈，不涉及标签和emoji）
       const descriptionResult = await generateUserPersonaDescription(
-        history,
+        enrichedHistory,
         apiKey,
         userPersona?.descriptionZh || userPersona?.description
       );
@@ -1340,25 +1516,36 @@ const App: React.FC = () => {
       
       // 更新状态（强制更新，即使看起来相同）
       // 使用函数式更新确保状态正确更新
+      // Merge Stage 4b signals with existing state (never lose previously extracted signals)
       setUserPersona(prev => ({
         ...prev,
         description: descriptionResult.description,
         descriptionZh: (descriptionResult as any).descriptionZh || descriptionResult.description,
         descriptionEn: (descriptionResult as any).descriptionEn || prev.descriptionEn,
         emojiFusion: (funEnabledThisRun && emojiResult?.emojiFusion) ? emojiResult.emojiFusion : prev.emojiFusion,
-        // Keep latest signals in state (do NOT trigger another refine rerank)
-        userTraits: (descriptionResult.userTraits && descriptionResult.userTraits.length > 0) ? descriptionResult.userTraits : prev.userTraits,
-        userTraitsZh: (descriptionResult as any).userTraitsZh || prev.userTraitsZh,
-        userTraitsEn: (descriptionResult as any).userTraitsEn || prev.userTraitsEn,
-        redFlags: (descriptionResult.redFlags && descriptionResult.redFlags.length > 0) ? descriptionResult.redFlags : prev.redFlags,
-        redFlagsZh: (descriptionResult as any).redFlagsZh || prev.redFlagsZh,
-        redFlagsEn: (descriptionResult as any).redFlagsEn || prev.redFlagsEn,
-        redFlagKeywords: (descriptionResult.redFlagKeywords && descriptionResult.redFlagKeywords.length > 0) ? descriptionResult.redFlagKeywords : prev.redFlagKeywords
+        userTraits: (descriptionResult.userTraits?.length > 0) ? dedup([...descriptionResult.userTraits, ...(prev.userTraits || [])]).slice(0, 5) : prev.userTraits,
+        userTraitsZh: ((descriptionResult as any).userTraitsZh?.length > 0) ? dedup([...(descriptionResult as any).userTraitsZh, ...(prev.userTraitsZh || [])]).slice(0, 5) : prev.userTraitsZh,
+        userTraitsEn: ((descriptionResult as any).userTraitsEn?.length > 0) ? dedup([...(descriptionResult as any).userTraitsEn, ...(prev.userTraitsEn || [])]).slice(0, 5) : prev.userTraitsEn,
+        redFlags: (descriptionResult.redFlags?.length > 0) ? dedup([...descriptionResult.redFlags, ...(prev.redFlags || [])]).slice(0, 5) : prev.redFlags,
+        redFlagsZh: ((descriptionResult as any).redFlagsZh?.length > 0) ? dedup([...(descriptionResult as any).redFlagsZh, ...(prev.redFlagsZh || [])]).slice(0, 5) : prev.redFlagsZh,
+        redFlagsEn: ((descriptionResult as any).redFlagsEn?.length > 0) ? dedup([...(descriptionResult as any).redFlagsEn, ...(prev.redFlagsEn || [])]).slice(0, 5) : prev.redFlagsEn,
+        redFlagKeywords: (descriptionResult.redFlagKeywords?.length > 0) ? dedup([...descriptionResult.redFlagKeywords, ...(prev.redFlagKeywords || [])]).slice(0, 5) : prev.redFlagKeywords
       }));
       
       // Update avatar image only when fun is enabled.
       if (funEnabledThisRun) {
         setEmojiFusionImage(emojiResult?.fusionUrl || null);
+      }
+
+      // Backfill persona summary into the latest feedback memory entry
+      const summaryText = (descriptionResult as any).descriptionEn || descriptionResult.description || null;
+      if (summaryText) {
+        setFeedbackMemory(prev => {
+          if (prev.length === 0) return prev;
+          const updated = [...prev];
+          updated[0] = { ...updated[0], personaSummary: summaryText.slice(0, 600) };
+          return updated;
+        });
       }
       
       console.log(`[App] ✅ State updated:`, {
@@ -1373,9 +1560,9 @@ const App: React.FC = () => {
         emoji_fusion: (funEnabledThisRun && emojiResult?.emojiFusion) ? emojiResult.emojiFusion.join(' ') : '(unchanged)',
         fusion_image: (funEnabledThisRun && emojiResult?.fusionUrl) ? `✅ Generated: ${emojiResult.fusionUrl.substring(0, 60)}...` : (funEnabledThisRun ? '❌ Failed - using fallback' : '(unchanged)'),
         description_preview: descriptionResult.description.substring(0, 100) + '...',
-        red_flags: descriptionResult.redFlags,
-        red_flag_keywords: descriptionResult.redFlagKeywords,
-        user_traits: descriptionResult.userTraits,
+        red_flags: descriptionResult.redFlags?.length > 0 ? descriptionResult.redFlags : '(kept previous)',
+        red_flag_keywords: descriptionResult.redFlagKeywords?.length > 0 ? descriptionResult.redFlagKeywords : '(kept previous)',
+        user_traits: descriptionResult.userTraits?.length > 0 ? descriptionResult.userTraits : '(kept previous)',
         history_length: history.length
       });
     } catch (error) {
@@ -1405,6 +1592,8 @@ const App: React.FC = () => {
     addLog('RE_RANK', 'Feed Updated (Stage 2 Applied)', { 
       top_post: pendingSmartFeed.posts[0].title.en
     });
+
+    lastFeedbackAppliedAtRef.current = Date.now();
 
     // Clear pending state
     setPendingSmartFeed(null);
@@ -1633,9 +1822,9 @@ const App: React.FC = () => {
                 className="absolute top-[calc(100%+8px)] left-0 right-0 z-50 overflow-hidden bg-white/90 backdrop-blur-3xl backdrop-saturate-150 border border-white/40 shadow-2xl rounded-[32px]"
               >
                 <div className="p-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
-                  <Dashboard 
-                     userProfile={userProfile} 
-                     logs={logs} 
+                  <Dashboard
+                     userProfile={userProfile}
+                     logs={logs}
                      onReset={handleReset}
                      className="space-y-6"
                      language={language}
@@ -1643,6 +1832,7 @@ const App: React.FC = () => {
                      emojiFusionImage={emojiFusionImage}
                      enablePersonaFun={enablePersonaFun}
                      onTogglePersonaFun={() => setEnablePersonaFun(v => !v)}
+                     feedbackMemory={feedbackMemory}
                   />
                 </div>
               </motion.div>
@@ -1876,15 +2066,16 @@ const App: React.FC = () => {
 
           {/* Dashboard Column */}
           <div className="lg:col-span-5 xl:col-span-5 hidden lg:block h-full">
-             <Dashboard 
-               userProfile={userProfile} 
-               logs={logs} 
+             <Dashboard
+               userProfile={userProfile}
+               logs={logs}
                onReset={handleReset}
                language={language}
                userPersona={userPersona}
                emojiFusionImage={emojiFusionImage}
                enablePersonaFun={enablePersonaFun}
                onTogglePersonaFun={() => setEnablePersonaFun(v => !v)}
+               feedbackMemory={feedbackMemory}
              />
           </div>
 

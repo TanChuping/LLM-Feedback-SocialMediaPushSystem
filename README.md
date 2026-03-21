@@ -42,14 +42,18 @@ flowchart TD
   ColdStart[ColdStart:RandomProfile+ShuffleFeed] --> Feedback[UserFeedback:NLG+TargetPost]
   Feedback --> Stage1[Stage1:LLM_IntentAnalysis]
   Stage1 --> ProfileUpdate[ProfileUpdate:ApplyAdjustments+Gates]
+  Stage1 --> FeedbackMem[FeedbackMemory:StructuredLog]
   ProfileUpdate --> Stage15[Stage1.5:HybridRetrieval]
-  Stage15 --> Stage2[Stage2:LLM_Rerank]
+  Stage15 --> Stage2[Stage2:LLM_Rerank+PersonaSummary]
   Stage2 --> ApplyGuard[ApplyGuard:Top10RedflagGuardrail]
   ApplyGuard --> UIApply[UI:ApplyOrPending]
   UIApply --> Stage3[Stage3:LLM_ProfileCleanup]
   UIApply --> Stage4a[Stage4a:FastPersonaSignals]
   Stage4a --> Stage2Refine[Stage2Refine:RerankWithSignals+Banner]
   UIApply --> Stage4b[Stage4b:Nickname+Description+EmojiFusion]
+  Stage4b --> FeedbackMem
+  FeedbackMem -.->|"FEEDBACK_EXCERPTS (pseudo-RAG)"| Stage2
+  FeedbackMem -.->|PERSONA_SUMMARY| Stage2
 ```
 
 **Workflow (step-by-step):**
@@ -92,6 +96,8 @@ flowchart TD
    - Reorders candidates using:
      - current profile, recent feedback history
      - persona signals (`user_traits`, `red_flags`, `red_flag_keywords`)
+     - full persona description (`PERSONA_SUMMARY`, ~400 chars, from previous Stage 4b)
+     - raw feedback excerpts (`FEEDBACK_EXCERPTS`, pseudo-RAG keyword retrieval from Feedback Memory — provides ground-truth user words when persona summary is ambiguous)
      - stable exceptions (`ENTITY_DISLIKES`, `ASPECT_DISLIKES`)
      - primary/secondary tags per post (so “Nightlife is primary, Music is secondary” is explicit)
 
@@ -107,13 +113,20 @@ flowchart TD
      - **Grace period**: tags that were **just boosted** are passed as `RECENTLY_BOOSTED_TAGS` and should not be immediately decayed.
 
 9. **Stage 4: Persona (Background, split)**
-   - **Stage 4a (fast)**: emits `user_traits`, `red_flags`, `red_flag_keywords` → immediately triggers a refined Stage 2 rerank + UI banner.
-   - **Stage 4b (slow UI)**: nickname/description/emoji fusion updates the UI only (no further rerank).
+   - **Stage 4a (fast, strong model)**: emits `user_traits`, `red_flags`, `red_flag_keywords` → immediately triggers a refined Stage 2 rerank + UI banner.
+   - **Stage 4b (slow UI)**: nickname/description/emoji fusion updates the UI only (no further rerank). The generated persona description is also stored in Feedback Memory and fed back to Stage 2 as `PERSONA_SUMMARY`.
 
 **Note (Nuance without collateral damage):**
 - When feedback criticizes an *aspect* (framing/bias/conduct) rather than the *topic* itself, the system stores **downrank-only red flags** so the deterministic ranker pushes down matching posts **without killing the topic tag**.
 - Stage 4 summarizes durable `red_flags` (human readable) + `red_flag_keywords` (matchable phrases, max 5) so later refreshes can apply consistent aspect-level downranking without extra LLM calls.
 - Topic-level dislikes are intentionally harder to trigger (explicit stop intent or repeated negatives), to reduce umbrella-tag collateral damage.
+
+**Feedback Memory (Client-side Structured Log + Pseudo-RAG):**
+
+Each feedback cycle records a structured entry containing the raw user input, Stage 1 analysis (adjustments, dislike_scope, user_note, preference_targets), a profile snapshot, and the persona summary (backfilled once Stage 4b completes). This serves three purposes:
+1. **Transparency**: users can inspect the full history of how their feedback was interpreted via the Dashboard's "Memory" tab.
+2. **Active pseudo-RAG retrieval**: when building Stage 2 context, the system performs keyword matching (using `red_flag_keywords`, `ENTITY_DISLIKES`, `ASPECT_DISLIKES`) against `searchableText` in memory entries. Matched entries are injected as `FEEDBACK_EXCERPTS` — raw user words that Stage 2 can use as ground-truth evidence when persona summary alone is ambiguous. No extra LLM calls are made; retrieval is pure client-side string matching.
+3. **Stage 4 enrichment**: structured entity/aspect dislikes from memory are appended to the feedback history passed to Stage 4a/4b, improving red_flag extraction reliability especially for vulgar or ambiguous feedback.
 
 *DEMO (please wait a moment for the 4 GIFs to load)
 1/4.
@@ -226,7 +239,7 @@ This keeps the system debuggable and limits the blast radius of model errors.
 ## Tech Stack (Current Implementation)
 
 * **Frontend**: React (Vite, TypeScript)
-* **LLM**: Groq API (Llama 3 70B) for low latency JSON parsing.
+* **LLM**: Groq API — mixed-model strategy: GPT OSS 120B (Stage 1, Stage 2, Stage 4a persona signals) and GPT OSS 20B (Stage 3, Stage 4b, nickname, emoji) for low latency. All prompts are structured for prefix caching (static system prompt, dynamic user prompt).
 * **State / Storage**: Client-side state + LocalStorage (demo only)
 * **Ranking Logic**: Client-side re-ranking
 

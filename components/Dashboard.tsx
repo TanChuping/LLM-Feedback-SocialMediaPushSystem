@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { UserProfile, SystemLog, WeightedTag, UserPersona } from '../types';
-import { Activity, User, Terminal, RefreshCcw } from 'lucide-react';
+import { UserProfile, SystemLog, WeightedTag, UserPersona, FeedbackMemoryEntry } from '../types';
+import { Activity, User, Terminal, RefreshCcw, BookOpen, ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 import { Language, t } from '../i18n';
@@ -17,6 +17,7 @@ interface DashboardProps {
   language: Language;
   enablePersonaFun: boolean;
   onTogglePersonaFun: () => void;
+  feedbackMemory?: FeedbackMemoryEntry[];
 }
 
 const TagChip: React.FC<{ tagData: WeightedTag; colorClass: string; mixedBreakdown?: { interest: number; negative: number; language: Language } }> = ({ tagData, colorClass, mixedBreakdown }) => {
@@ -77,11 +78,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   emojiFusionImage,
   language,
   enablePersonaFun,
-  onTogglePersonaFun
+  onTogglePersonaFun,
+  feedbackMemory = []
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const memoryScrollRef = useRef<HTMLDivElement>(null);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(true);
   const [showFunInfo, setShowFunInfo] = useState(false);
+  const [logView, setLogView] = useState<'events' | 'memory'>('events');
+  const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(new Set());
 
   // Merge duplicates across likes/dislikes for display only.
   type DisplayTag = {
@@ -428,47 +433,182 @@ export const Dashboard: React.FC<DashboardProps> = ({
       <div className="bg-gray-900/80 backdrop-blur-xl rounded-[24px] shadow-2xl border border-white/10 overflow-hidden flex flex-col h-[400px]">
         <div className="bg-gray-800/50 px-4 py-3 flex items-center justify-between border-b border-white/5">
           <div className="flex items-center gap-2 text-gray-300 text-sm font-mono">
-            <Terminal size={16} />
-            <span>algorithm_events.log</span>
+            {logView === 'events' ? <Terminal size={16} /> : <BookOpen size={16} />}
+            <span>{logView === 'events' ? 'algorithm_events.log' : t(language, 'feedbackMemory')}</span>
           </div>
-          <div className="flex gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm"></div>
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500 shadow-sm"></div>
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm"></div>
+          <div className="flex items-center gap-2">
+            <div className="flex bg-gray-700/50 rounded-lg p-0.5">
+              <button
+                onClick={() => setLogView('events')}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors ${
+                  logView === 'events' ? 'bg-gray-500/60 text-white' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {t(language, 'viewAlgoLog')}
+              </button>
+              <button
+                onClick={() => setLogView('memory')}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors ${
+                  logView === 'memory' ? 'bg-purple-500/60 text-white' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {t(language, 'viewMemory')}{feedbackMemory.length > 0 ? ` (${feedbackMemory.length})` : ''}
+              </button>
+            </div>
+            <div className="flex gap-1.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm"></div>
+              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500 shadow-sm"></div>
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm"></div>
+            </div>
           </div>
         </div>
         
-        <div 
-          ref={scrollRef}
-          className="flex-1 p-4 overflow-y-auto custom-scrollbar font-mono text-xs space-y-4"
-        >
-          {logs.length === 0 && (
-            <div className="text-gray-500 text-center mt-10">{t(language, 'waitingForInteraction')}</div>
-          )}
-          
-          {logs.map((log) => (
-            <div key={log.id} className="border-l-2 border-gray-700 pl-3 py-1 animate-in slide-in-from-left-2 duration-300">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-gray-500">[{log.timestamp}]</span>
-                <span className={`font-bold ${
-                  log.type === 'FEEDBACK' ? 'text-yellow-400' :
-                  log.type === 'LLM_ANALYSIS' ? 'text-purple-400' :
-                  log.type === 'PROFILE_UPDATE' ? 'text-blue-400' :
-                  'text-green-400'
-                }`}>
-                  {log.type}
-                </span>
-              </div>
-              <div className="text-gray-300 mb-1 font-semibold">{log.title}</div>
-              
-              {log.details && (
-                <div className="bg-black/40 p-2 rounded text-gray-400 whitespace-pre-wrap break-words border border-white/5">
-                  {typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2)}
+        {logView === 'events' ? (
+          <div 
+            ref={scrollRef}
+            className="flex-1 p-4 overflow-y-auto custom-scrollbar font-mono text-xs space-y-4"
+          >
+            {logs.length === 0 && (
+              <div className="text-gray-500 text-center mt-10">{t(language, 'waitingForInteraction')}</div>
+            )}
+            
+            {logs.map((log) => (
+              <div key={log.id} className="border-l-2 border-gray-700 pl-3 py-1 animate-in slide-in-from-left-2 duration-300">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-gray-500">[{log.timestamp}]</span>
+                  <span className={`font-bold ${
+                    log.type === 'FEEDBACK' ? 'text-yellow-400' :
+                    log.type === 'LLM_ANALYSIS' ? 'text-purple-400' :
+                    log.type === 'PROFILE_UPDATE' ? 'text-blue-400' :
+                    'text-green-400'
+                  }`}>
+                    {log.type}
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
+                <div className="text-gray-300 mb-1 font-semibold">{log.title}</div>
+                
+                {log.details && (
+                  <div className="bg-black/40 p-2 rounded text-gray-400 whitespace-pre-wrap break-words border border-white/5">
+                    {typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div 
+            ref={memoryScrollRef}
+            className="flex-1 p-3 overflow-y-auto custom-scrollbar text-xs space-y-2"
+          >
+            {feedbackMemory.length === 0 && (
+              <div className="text-gray-500 text-center mt-10">{t(language, 'feedbackMemoryEmpty')}</div>
+            )}
+            
+            {feedbackMemory.map((entry) => {
+              const isExpanded = expandedMemoryIds.has(entry.id);
+              const timeStr = new Date(entry.timestamp).toLocaleTimeString();
+              return (
+                <div key={entry.id} className="border border-white/5 rounded-lg bg-black/30 overflow-hidden animate-in fade-in duration-200">
+                  <button
+                    onClick={() => setExpandedMemoryIds(prev => {
+                      const next = new Set(prev);
+                      if (next.has(entry.id)) next.delete(entry.id);
+                      else next.add(entry.id);
+                      return next;
+                    })}
+                    className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-white/5 transition-colors"
+                  >
+                    {isExpanded ? <ChevronDown size={12} className="text-gray-500 shrink-0" /> : <ChevronRight size={12} className="text-gray-500 shrink-0" />}
+                    <span className="text-gray-500 font-mono text-[10px] shrink-0">[{timeStr}]</span>
+                    <span className="text-gray-200 font-semibold truncate">{entry.targetPostTitle}</span>
+                    <span className={`ml-auto shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      entry.dislikeScope === 'topic' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
+                    }`}>
+                      {entry.dislikeScope}
+                    </span>
+                  </button>
+                  
+                  {isExpanded && (
+                    <div className="px-3 pb-3 space-y-2 border-t border-white/5">
+                      <div className="mt-2">
+                        <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">Feedback</div>
+                        <div className="text-gray-200 bg-black/30 p-2 rounded border border-white/5">"{entry.rawFeedback}"</div>
+                      </div>
+                      
+                      {entry.adjustments.length > 0 && (
+                        <div>
+                          <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">Adjustments</div>
+                          <div className="flex flex-wrap gap-1">
+                            {entry.adjustments.map((adj, i) => (
+                              <span key={i} className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                                adj.category === 'interest' 
+                                  ? (adj.delta >= 0 ? 'bg-green-500/20 text-green-300' : 'bg-orange-500/20 text-orange-300')
+                                  : 'bg-red-500/20 text-red-300'
+                              }`}>
+                                {adj.tag} {adj.delta >= 0 ? '+' : ''}{adj.delta}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {entry.userNote && (
+                        <div>
+                          <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">AI Note</div>
+                          <div className="text-gray-400 text-[11px] leading-relaxed">{entry.userNote}</div>
+                        </div>
+                      )}
+                      
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">Persona Summary</div>
+                        <div className="text-gray-400 text-[11px] leading-relaxed">
+                          {entry.personaSummary || <span className="italic text-gray-600">{t(language, 'awaitingPersona')}</span>}
+                        </div>
+                      </div>
+                      
+                      {entry.profileSnapshotAfter.topInterests.length > 0 && (
+                        <div>
+                          <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">Profile Snapshot</div>
+                          <div className="flex flex-wrap gap-1">
+                            {entry.profileSnapshotAfter.topInterests.map((t, i) => (
+                              <span key={i} className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-green-500/15 text-green-300">
+                                {t.tag} {t.weight.toFixed(1)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {entry.ragRetrievals && entry.ragRetrievals.length > 0 && (
+                        <div>
+                          <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">
+                            Pseudo-RAG Retrievals ({entry.ragRetrievals.length})
+                          </div>
+                          <div className="space-y-1">
+                            {entry.ragRetrievals.map((r, i) => (
+                              <div key={i} className="bg-purple-500/10 border border-purple-500/20 rounded p-1.5 text-[10px]">
+                                <div className="flex items-center gap-1 text-purple-300 font-mono">
+                                  <span>[{new Date(r.timestamp).toLocaleTimeString()}]</span>
+                                  <span className="text-purple-400 font-bold">{r.source}</span>
+                                  <span className="ml-auto text-gray-500">score {r.score}</span>
+                                </div>
+                                <div className="mt-0.5 text-gray-400">
+                                  matched: {r.matchedTerms.map((t, j) => (
+                                    <span key={j} className="inline-block px-1 py-0 mx-0.5 rounded bg-purple-500/20 text-purple-200 font-mono">{t}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
