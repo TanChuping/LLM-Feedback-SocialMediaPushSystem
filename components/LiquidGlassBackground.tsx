@@ -52,14 +52,15 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
 
     const canvas = canvasRef.current;
     const dpr = window.devicePixelRatio || 1;
-    const vp = window.visualViewport;
-    const cssWidth = vp ? vp.width : window.innerWidth;
-    const cssHeight = vp ? vp.height : window.innerHeight;
+    const cssWidth = window.innerWidth;
+    const cssHeight = window.innerHeight;
+    const bufferWidth = Math.floor(cssWidth * dpr);
+    const bufferHeight = Math.floor(cssHeight * dpr);
 
     canvas.style.width = cssWidth + 'px';
     canvas.style.height = cssHeight + 'px';
-    canvas.width = Math.floor(cssWidth * dpr);
-    canvas.height = Math.floor(cssHeight * dpr);
+    canvas.width = bufferWidth;
+    canvas.height = bufferHeight;
     
     const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     if (!gl) return;
@@ -77,9 +78,21 @@ export const LiquidGlassBackground: React.FC<LiquidGlassBackgroundProps> = ({
     }
 
     // 监听窗口大小变化和 visualViewport 变化（处理移动设备缩放）
-    // Renderer now updates canvas size per-frame using visualViewport,
-    // but we still listen for resize to trigger region re-measurement in the hook.
-    const handleResize = () => {};
+    const handleResize = () => {
+      if (!canvas) return;
+      const currentDpr = window.devicePixelRatio || 1;
+      const newCssW = window.innerWidth;
+      const newCssH = window.innerHeight;
+      const newBufW = Math.floor(newCssW * currentDpr);
+      const newBufH = Math.floor(newCssH * currentDpr);
+
+      canvas.style.width = newCssW + 'px';
+      canvas.style.height = newCssH + 'px';
+      if (canvas.width !== newBufW || canvas.height !== newBufH) {
+        canvas.width = newBufW;
+        canvas.height = newBufH;
+      }
+    };
     
     window.addEventListener('resize', handleResize);
     // 监听 visualViewport 变化以处理移动设备缩放
