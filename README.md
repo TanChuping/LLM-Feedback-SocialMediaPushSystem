@@ -66,6 +66,7 @@ flowchart TD
    - User clicks "..." and submits natural-language feedback on a target post.
 
 3. **Stage 1: Intent Analysis (LLM)**
+   - Before producing adjustments, the model performs **context reasoning**: resolving pronouns/deictics to the target post, distinguishing comparative winners/losers (e.g., "AI replaced X" means X is negative, not AI), and separating reasons from targets.
    - Produces structured outputs:
      - **tag adjustments** (interest/dislike deltas on tags in the master vocabulary)
      - **explicit_search_query** (optional; bilingual tokens encouraged)
@@ -82,6 +83,11 @@ flowchart TD
        - If `dislike_scope="aspect"`, we avoid converting the target post’s SUBJECT tag into a persistent profile dislike.
        - Instead, we rely on **soft downrank rules** (e.g., `soft_downrank_query="nerd"`) + Stage 2 semantics.
        - This is why you might see a Stage 1 “dislike adjustment” in logs, but not see it show up in **Negative Filters**.
+       - **Exception**: Quality/meta tags (Clickbait, Scam, Rant, etc.) are exempt — they describe content *quality*, not *topic*. When a user complains about clickbait on a clickbait post, the Clickbait tag IS what they dislike.
+     - **Negative interest dampening**:
+       - For mild disinterest (not hate), Stage 1 outputs `category="interest"` with a negative delta (-2 to -6 depending on severity).
+       - These create negative-weight entries in the interests list, which actively reduce ranking scores for matching content and display in the Dashboard's negative filter section.
+       - This provides a middle ground between "no opinion" and "full dislike" (e.g., indifference dampens rather than bans).
 
 5. **Stage 1.5: Hybrid Retrieval (Candidate Pool)**
    - Builds the candidate list that Stage 2 will reorder:
@@ -175,7 +181,7 @@ We calculate relevance by multiplying the user's interest strength by the tag's 
 interest_reward = Σ ( user_interest[tag] * post_tag_relevance * k_like )
 ```
 
-* **user_interest**: How much the user likes the topic (from profile).
+* **user_interest**: How much the user likes the topic (from profile). Can be negative for dampened topics, naturally reducing the score.
 * **post_tag_relevance**: How central the topic is to this specific post (e.g., 2.0 for Core Topic, 0.5 for Vibe).
 
 This distinction ensures that liking "Social" boosts a Nightclub post (Social: 2.5) much more than a Gaming post that happens to have a chat feature (Social: 0.2).
@@ -205,8 +211,8 @@ A small random perturbation used only to break ties between similarly scored ite
 
 The user profile is a lightweight structure containing:
 
-* positive tag weights (`interests`)
-* negative tag weights (`dislikes`)
+* tag weights (`interests`) — can be positive (affinity) or negative (dampening for mild disinterest)
+* dislike weights (`dislikes`) — for explicit topic rejection
 * optional metadata or coarse user hints
 
 Weights are adjusted incrementally and are not learned from large offline datasets.
