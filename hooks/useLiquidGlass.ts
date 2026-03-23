@@ -53,48 +53,29 @@ export function useLiquidGlass({
   }, [id]);
 
   const update = useCallback(() => {
-    if (!enabled || !elementRef.current) {
-      return;
-    }
-    
+    if (!enabled || !elementRef.current) return;
+
+    // Always store raw layout-viewport coordinates.
+    // The renderer handles visualViewport transform per-frame.
     const rect = elementRef.current.getBoundingClientRect();
-    
-    // 使用 visualViewport API 来处理移动设备缩放（双指捏合）
-    // 在 viewport zoom 时，getBoundingClientRect 返回的坐标是相对于 layout viewport 的 CSS 像素
-    // 但 canvas 是 fixed 定位，需要转换为相对于 visual viewport 的坐标
-    const viewport = window.visualViewport;
-    
-    let x = rect.left;
-    let y = rect.top;
-    let width = rect.width;
-    let height = rect.height;
-    
-    // 如果存在 visualViewport（移动设备缩放时），需要调整坐标
-    if (viewport && viewport.scale !== 1) {
-      // 对于 fixed 定位的元素，getBoundingClientRect 在 viewport zoom 时
-      // 返回的坐标是相对于 layout viewport 的，但我们需要相对于 visual viewport
-      // visualViewport.offsetLeft/Top 是 visual viewport 相对于 layout viewport 的偏移
-      x = (rect.left - viewport.offsetLeft) / viewport.scale;
-      y = (rect.top - viewport.offsetTop) / viewport.scale;
-      width = rect.width / viewport.scale;
-      height = rect.height / viewport.scale;
-    }
-    
+    const anchorScrollX = window.scrollX;
     const anchorScrollY = window.scrollY;
 
     const region = currentRegionRef.current ? {
       ...currentRegionRef.current,
-      x,
-      y,
-      width,
-      height,
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+      anchorScrollX,
       anchorScrollY,
     } : {
       id,
-      x,
-      y,
-      width,
-      height,
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+      anchorScrollX,
       anchorScrollY,
       cornerRadius: 32,
       ior: 1.1,
@@ -103,7 +84,7 @@ export function useLiquidGlass({
       blurRadius: 3,
       highlightWidth: 1,
     };
-    
+
     register(region);
     currentRegionRef.current = region;
   }, [enabled, register, id]);

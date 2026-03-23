@@ -9,11 +9,12 @@
 
 export interface GlassRegion {
   id: string;
-  x: number;        // 相对于视口的 x 坐标 (at measurement time)
-  y: number;        // 相对于视口的 y 坐标 (at measurement time)
+  x: number;        // layout-viewport-relative X (from getBoundingClientRect)
+  y: number;        // layout-viewport-relative Y
   width: number;
   height: number;
-  anchorScrollY: number; // window.scrollY when x/y were measured
+  anchorScrollX: number; // window.scrollX at measurement time
+  anchorScrollY: number; // window.scrollY at measurement time
   cornerRadius?: number;
   ior?: number;
   thickness?: number;
@@ -33,6 +34,8 @@ export class LiquidGlassRenderer {
   private regions: Map<string, GlassRegion> = new Map();
   private animationFrameId: number | null = null;
   private isInitialized = false;
+  private lastCssW = 0;
+  private lastCssH = 0;
 
   // Shader sources (从原版 app.js 移植)
   private readonly vsSource = `
@@ -445,12 +448,22 @@ export class LiquidGlassRenderer {
   }
 
   private render(): void {
+    const vp = window.visualViewport;
     const dpr = window.devicePixelRatio || 1;
-    const cssWidth = window.innerWidth;
-    const cssHeight = window.innerHeight;
+    const vpScale = vp ? vp.scale : 1;
+    const vpOffsetX = vp ? vp.offsetLeft : 0;
+    const vpOffsetY = vp ? vp.offsetTop : 0;
+    const cssWidth = vp ? vp.width : window.innerWidth;
+    const cssHeight = vp ? vp.height : window.innerHeight;
     const bufWidth = Math.floor(cssWidth * dpr);
     const bufHeight = Math.floor(cssHeight * dpr);
 
+    if (this.lastCssW !== cssWidth || this.lastCssH !== cssHeight) {
+      this.canvas.style.width = cssWidth + 'px';
+      this.canvas.style.height = cssHeight + 'px';
+      this.lastCssW = cssWidth;
+      this.lastCssH = cssHeight;
+    }
     if (this.canvas.width !== bufWidth || this.canvas.height !== bufHeight) {
       this.canvas.width = bufWidth;
       this.canvas.height = bufHeight;
@@ -466,19 +479,31 @@ export class LiquidGlassRenderer {
 
     this.renderBackground();
 
-    const currentScrollY = window.scrollY;
+    const curScrollX = window.scrollX;
+    const curScrollY = window.scrollY;
 
     this.regions.forEach(region => {
-      const scrollDelta = region.anchorScrollY - currentScrollY;
-      const adjustedRegion: GlassRegion = {
+      // Reconstruct current layout-viewport position from anchor
+      const layoutX = region.x + (region.anchorScrollX - curScrollX);
+      const layoutY = region.y + (region.anchorScrollY - curScrollY);
+
+      // Transform layout-viewport → visual-viewport (handles pinch zoom)
+      const vvX = (layoutX - vpOffsetX) / vpScale;
+      const vvY = (layoutY - vpOffsetY) / vpScale;
+      const vvW = region.width / vpScale;
+      const vvH = region.height / vpScale;
+
+      // Viewport culling — skip regions entirely off-screen
+      if (vvY + vvH < 0 || vvY > cssHeight || vvX + vvW < 0 || vvX > cssWidth) return;
+
+      this.renderGlassRegion({
         ...region,
-        x: region.x * dpr,
-        y: (region.y + scrollDelta) * dpr,
-        width: region.width * dpr,
-        height: region.height * dpr,
-        cornerRadius: (region.cornerRadius ?? 32) * dpr,
-      };
-      this.renderGlassRegion(adjustedRegion);
+        x: vvX * dpr,
+        y: vvY * dpr,
+        width: vvW * dpr,
+        height: vvH * dpr,
+        cornerRadius: ((region.cornerRadius ?? 32) / vpScale) * dpr,
+      });
     });
   }
 
