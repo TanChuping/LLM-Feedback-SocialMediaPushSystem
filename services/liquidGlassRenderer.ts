@@ -9,12 +9,13 @@
 
 export interface GlassRegion {
   id: string;
-  x: number;        // 相对于视口的 x 坐标
-  y: number;        // 相对于视口的 y 坐标
-  width: number;    // 宽度（像素）
-  height: number;   // 高度（像素）
+  x: number;        // 相对于视口的 x 坐标 (at measurement time)
+  y: number;        // 相对于视口的 y 坐标 (at measurement time)
+  width: number;
+  height: number;
+  anchorScrollY: number; // window.scrollY when x/y were measured
   cornerRadius?: number;
-  ior?: number;     // 折射率
+  ior?: number;
   thickness?: number;
   normalStrength?: number;
   blurRadius?: number;
@@ -27,6 +28,8 @@ export class LiquidGlassRenderer {
   private program: WebGLProgram | null = null;
   private bgProgram: WebGLProgram | null = null;
   private backgroundTexture: WebGLTexture | null = null;
+  private bgPositionBuffer: WebGLBuffer | null = null;
+  private glassPositionBuffer: WebGLBuffer | null = null;
   private regions: Map<string, GlassRegion> = new Map();
   private animationFrameId: number | null = null;
   private isInitialized = false;
@@ -256,7 +259,16 @@ export class LiquidGlassRenderer {
       throw new Error('Failed to create shader programs');
     }
     
-    console.log('Shaders compiled successfully');
+    // Pre-allocate vertex buffers (reused every frame)
+    const bgPositions = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+    this.bgPositionBuffer = this.gl.createBuffer();
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.bgPositionBuffer);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, bgPositions, this.gl.STATIC_DRAW);
+
+    const glassPositions = new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5]);
+    this.glassPositionBuffer = this.gl.createBuffer();
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.glassPositionBuffer);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, glassPositions, this.gl.STATIC_DRAW);
 
     // 创建背景纹理
     this.backgroundTexture = this.gl.createTexture();
@@ -412,10 +424,6 @@ export class LiquidGlassRenderer {
   // 注册/更新玻璃区域
   registerRegion(region: GlassRegion): void {
     this.regions.set(region.id, region);
-    console.log(`[LiquidGlassRenderer] Region registered: ${region.id}`, {
-      count: this.regions.size,
-      region: { x: region.x, y: region.y, width: region.width, height: region.height }
-    });
   }
 
   // 注销玻璃区域
@@ -437,50 +445,47 @@ export class LiquidGlassRenderer {
   }
 
   private render(): void {
-    // 更新 canvas 尺寸 - 使用 visualViewport 来处理移动设备缩放
-    // 对于 fixed 定位的 canvas，应该使用 visual viewport 的尺寸（CSS 像素）
-    const viewport = window.visualViewport;
-    const width = viewport ? Math.floor(viewport.width) : window.innerWidth;
-    const height = viewport ? Math.floor(viewport.height) : window.innerHeight;
-    
-    if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-      this.gl.viewport(0, 0, width, height);
-    }
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = window.innerWidth;
+    const cssHeight = window.innerHeight;
+    const bufWidth = Math.floor(cssWidth * dpr);
+    const bufHeight = Math.floor(cssHeight * dpr);
 
-    // 如果 canvas 尺寸为 0，跳过渲染
-    if (width === 0 || height === 0) return;
+    if (this.canvas.width !== bufWidth || this.canvas.height !== bufHeight) {
+      this.canvas.width = bufWidth;
+      this.canvas.height = bufHeight;
+    }
+    this.gl.viewport(0, 0, bufWidth, bufHeight);
+
+    if (bufWidth === 0 || bufHeight === 0) return;
 
     this.gl.clearColor(0, 0, 0, 0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
-    if (!this.program || !this.bgProgram || !this.backgroundTexture) {
-      console.warn('Renderer not fully initialized:', {
-        program: !!this.program,
-        bgProgram: !!this.bgProgram,
-        texture: !!this.backgroundTexture
-      });
-      return;
-    }
+    if (!this.program || !this.bgProgram || !this.backgroundTexture) return;
 
-    // 绘制背景
     this.renderBackground();
 
-    // 绘制所有玻璃区域
+    const currentScrollY = window.scrollY;
+
     this.regions.forEach(region => {
-      this.renderGlassRegion(region);
+      const scrollDelta = region.anchorScrollY - currentScrollY;
+      const adjustedRegion: GlassRegion = {
+        ...region,
+        x: region.x * dpr,
+        y: (region.y + scrollDelta) * dpr,
+        width: region.width * dpr,
+        height: region.height * dpr,
+        cornerRadius: (region.cornerRadius ?? 32) * dpr,
+      };
+      this.renderGlassRegion(adjustedRegion);
     });
   }
 
   private renderBackground(): void {
-    if (!this.bgProgram || !this.backgroundTexture) return;
+    if (!this.bgProgram || !this.backgroundTexture || !this.bgPositionBuffer) return;
 
-    const positions = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1];
-    const positionBuffer = this.gl.createBuffer();
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(positions), this.gl.STATIC_DRAW);
-
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.bgPositionBuffer);
     this.gl.useProgram(this.bgProgram);
     const positionLoc = this.gl.getAttribLocation(this.bgProgram, 'a_position');
     this.gl.enableVertexAttribArray(positionLoc);
@@ -495,13 +500,9 @@ export class LiquidGlassRenderer {
   }
 
   private renderGlassRegion(region: GlassRegion): void {
-    if (!this.program || !this.backgroundTexture) return;
+    if (!this.program || !this.backgroundTexture || !this.glassPositionBuffer) return;
 
-    const positions = [-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5];
-    const positionBuffer = this.gl.createBuffer();
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(positions), this.gl.STATIC_DRAW);
-
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.glassPositionBuffer);
     this.gl.useProgram(this.program);
 
     // 设置 attributes
@@ -558,14 +559,10 @@ export class LiquidGlassRenderer {
       cancelAnimationFrame(this.animationFrameId);
     }
     this.regions.clear();
-    if (this.backgroundTexture) {
-      this.gl.deleteTexture(this.backgroundTexture);
-    }
-    if (this.program) {
-      this.gl.deleteProgram(this.program);
-    }
-    if (this.bgProgram) {
-      this.gl.deleteProgram(this.bgProgram);
-    }
+    if (this.bgPositionBuffer) this.gl.deleteBuffer(this.bgPositionBuffer);
+    if (this.glassPositionBuffer) this.gl.deleteBuffer(this.glassPositionBuffer);
+    if (this.backgroundTexture) this.gl.deleteTexture(this.backgroundTexture);
+    if (this.program) this.gl.deleteProgram(this.program);
+    if (this.bgProgram) this.gl.deleteProgram(this.bgProgram);
   }
 }

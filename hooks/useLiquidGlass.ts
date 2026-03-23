@@ -26,16 +26,14 @@ import { GlassRegion } from '../services/liquidGlassRenderer';
 interface UseLiquidGlassOptions {
   id: string;
   enabled?: boolean;
-  updateInterval?: number; // 自动更新位置的时间间隔（ms），0 表示不自动更新
+  updateInterval?: number; // Kept for API compat but ignored (scroll is per-frame now)
 }
 
 export function useLiquidGlass({
   id,
   enabled = true,
-  updateInterval = 0,
 }: UseLiquidGlassOptions) {
   const elementRef = useRef<HTMLElement | null>(null);
-  const updateTimerRef = useRef<number | null>(null);
   const currentRegionRef = useRef<GlassRegion | null>(null);
 
   const register = useCallback((region: Omit<GlassRegion, 'id'>) => {
@@ -56,7 +54,6 @@ export function useLiquidGlass({
 
   const update = useCallback(() => {
     if (!enabled || !elementRef.current) {
-      console.log(`[useLiquidGlass ${id}] Update skipped:`, { enabled, hasElement: !!elementRef.current });
       return;
     }
     
@@ -83,75 +80,60 @@ export function useLiquidGlass({
       height = rect.height / viewport.scale;
     }
     
+    const anchorScrollY = window.scrollY;
+
     const region = currentRegionRef.current ? {
       ...currentRegionRef.current,
       x,
       y,
       width,
       height,
+      anchorScrollY,
     } : {
       id,
       x,
       y,
       width,
       height,
-      cornerRadius: 32,      // 从 demo 调优的参数
-      ior: 1.1,              // IOR (Refraction)
-      thickness: 30.2,       // Thickness/Strength
-      normalStrength: 4,     // Normal Strength
-      blurRadius: 3,         // Blur Radius (Frosted)
-      highlightWidth: 1,     // Highlight Width
+      anchorScrollY,
+      cornerRadius: 32,
+      ior: 1.1,
+      thickness: 30.2,
+      normalStrength: 4,
+      blurRadius: 3,
+      highlightWidth: 1,
     };
     
-    console.log(`[useLiquidGlass ${id}] Registering region:`, region);
     register(region);
     currentRegionRef.current = region;
   }, [enabled, register, id]);
 
-  // 自动更新位置
+  // Re-measure positions on resize only (scroll is handled per-frame in the renderer via anchorScrollY)
   useEffect(() => {
-    if (!enabled || updateInterval <= 0) return;
+    if (!enabled) return;
 
-    const startAutoUpdate = () => {
-      if (updateTimerRef.current) {
-        clearInterval(updateTimerRef.current);
-      }
-      updateTimerRef.current = window.setInterval(update, updateInterval);
+    const handleResize = () => {
+      requestAnimationFrame(update);
     };
 
-    startAutoUpdate();
-
-    // 监听滚动和窗口大小变化
-    window.addEventListener('scroll', update, { passive: true });
-    window.addEventListener('resize', update);
-    
-    // 监听 visualViewport 事件以处理移动设备缩放（双指捏合）
-    // visualViewport 在移动设备缩放时会触发，但触控板缩放不会
+    window.addEventListener('resize', handleResize);
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', update);
-      window.visualViewport.addEventListener('scroll', update);
+      window.visualViewport.addEventListener('resize', handleResize);
+      window.visualViewport.addEventListener('scroll', handleResize);
     }
 
     return () => {
-      if (updateTimerRef.current) {
-        clearInterval(updateTimerRef.current);
-      }
-      window.removeEventListener('scroll', update);
-      window.removeEventListener('resize', update);
+      window.removeEventListener('resize', handleResize);
       if (window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', update);
-        window.visualViewport.removeEventListener('scroll', update);
+        window.visualViewport.removeEventListener('resize', handleResize);
+        window.visualViewport.removeEventListener('scroll', handleResize);
       }
     };
-  }, [enabled, updateInterval, update]);
+  }, [enabled, update]);
 
-  // 清理函数
   useEffect(() => {
     return () => {
       unregister();
-      if (updateTimerRef.current) {
-        clearInterval(updateTimerRef.current);
-      }
     };
   }, [unregister]);
 

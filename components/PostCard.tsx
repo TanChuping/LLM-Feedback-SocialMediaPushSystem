@@ -76,7 +76,7 @@ export const PostCard: React.FC<PostCardProps> = ({
     <div 
       ref={elementRef as React.RefObject<HTMLDivElement>}
       className={`
-        mb-6 p-5 transition-all duration-300 hover:scale-[1.01]
+        mb-6 p-5 transition-transform duration-300 hover:scale-[1.01] will-change-transform
         relative overflow-hidden
         rounded-[32px]
         
