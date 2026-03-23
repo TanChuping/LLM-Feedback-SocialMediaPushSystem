@@ -4,6 +4,7 @@ import { INITIAL_USER_PROFILE, MOCK_POSTS, ALL_TAGS } from './constants';
 import { ADDITIONAL_POSTS, EXTRA_TAGS } from './constants2'; 
 import { ADDITIONAL_POSTS_3, PET_AND_ENT_TAGS } from './constants3'; 
 import { ADDITIONAL_POSTS_4 } from './constants4';
+import { ADDITIONAL_POSTS_5, NEW_TAGS } from './constants5';
 import { rankPosts, normalizeTag, generateRandomProfile, getHybridFeed } from './services/recommendationEngine';
 import { analyzeFeedback, rerankFeed, pruneUserProfile, generateUserPersonaSignals, generateUserPersonaDescription, generateEmojiFusion, generateUserNickname } from './services/geminiService';
 import { PostCard } from './components/PostCard';
@@ -38,7 +39,7 @@ const MAX_NAMED_AVOIDS = 10;
 const MAX_HARD_AVOID_POSTS = 10;
 
 // Merge data sources with ID deduplication (keep first occurrence)
-const allPostsRaw = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3, ...ADDITIONAL_POSTS_4];
+const allPostsRaw = [...MOCK_POSTS, ...ADDITIONAL_POSTS, ...ADDITIONAL_POSTS_3, ...ADDITIONAL_POSTS_4, ...ADDITIONAL_POSTS_5];
 const postsById = new Map<string, Post>();
 allPostsRaw.forEach(post => {
   if (!postsById.has(post.id)) {
@@ -47,7 +48,7 @@ allPostsRaw.forEach(post => {
 });
 const COMBINED_POSTS = Array.from(postsById.values());
 
-const EXPLICIT_TAGS = [...ALL_TAGS, ...EXTRA_TAGS, ...PET_AND_ENT_TAGS];
+const EXPLICIT_TAGS = [...ALL_TAGS, ...EXTRA_TAGS, ...PET_AND_ENT_TAGS, ...NEW_TAGS];
 const POST_DERIVED_TAGS = COMBINED_POSTS.flatMap(post => post.tags);
 const MASTER_TAG_POOL = Array.from(new Set([...EXPLICIT_TAGS, ...POST_DERIVED_TAGS]));
 
@@ -602,12 +603,16 @@ const App: React.FC = () => {
               if (safeDelta > 0) safeDelta = 0;     // Ensure it's only decay
 
               updatedInterests[idx].weight += safeDelta;
-              if (updatedInterests[idx].weight < 0) updatedInterests[idx].weight = 0;
+              // Only floor at 0 for tags that were positive (decay shouldn't flip polarity)
+              // Preserve already-negative interests (they represent active dampening from user feedback)
+              if (updatedInterests[idx].weight < 0 && (updatedInterests[idx].weight - safeDelta) > 0) {
+                updatedInterests[idx].weight = 0;
+              }
             }
         });
         
-        // Remove tags that fell below threshold
-        const filteredInterests = updatedInterests.filter(i => i.weight > 0.1);
+        // Remove near-zero tags but keep negative interests (active dampening)
+        const filteredInterests = updatedInterests.filter(i => i.weight > 0.1 || i.weight < -0.1);
         
         // React StrictMode may invoke state updaters twice in dev; keep this updater pure (no side effects).
         
@@ -818,18 +823,14 @@ const App: React.FC = () => {
         }
 
         if (existingIdx >= 0) {
-          // If it already exists, just add delta (delta can be negative to dampen)
           let newWeight = currentInterests[existingIdx].weight + adj.delta;
           newWeight = Math.min(newWeight, MAX_TAG_WEIGHT);
           currentInterests[existingIdx].weight = newWeight;
-          currentInterests[existingIdx].tag = matchedTag; // update to matched tag
+          currentInterests[existingIdx].tag = matchedTag;
         } else {
-          // New interest
-          if (adj.delta > 0) {
-            const initialWeight = Math.min(adj.delta, MAX_TAG_WEIGHT);
-            currentInterests.push({ tag: matchedTag, weight: initialWeight });
-            console.log(`[Tag Addition] Added new interest: "${matchedTag}" (weight: ${initialWeight})`);
-          }
+          const initialWeight = Math.min(adj.delta, MAX_TAG_WEIGHT);
+          currentInterests.push({ tag: matchedTag, weight: initialWeight });
+          console.log(`[Tag Addition] Added ${adj.delta > 0 ? 'new interest' : 'negative interest'}: "${matchedTag}" (weight: ${initialWeight})`);
         }
         if (typeof adj.delta === 'number' && adj.delta > 0) boostedThisTurn.push(matchedTag);
         if (typeof adj.delta === 'number' && adj.delta !== 0) {
@@ -855,7 +856,16 @@ const App: React.FC = () => {
         // Guardrail: if the LLM classified this feedback as "aspect" dislike,
         // do NOT flip the SUBJECT tag of the current content into profile dislikes.
         // We want to downrank the problematic *aspect*, not kill the topic.
-        if (analysis.dislike_scope === 'aspect') {
+        // EXCEPTION: Quality/meta tags (Clickbait, Scam, etc.) describe content QUALITY,
+        // not content TOPIC. When users complain about clickbait on a clickbait post,
+        // that IS the thing they dislike — the guardrail should not protect these.
+        const QUALITY_META_TAGS = new Set([
+          'clickbait', 'scam', 'scam alert', 'warning', 'secret hack',
+          'satire', 'rant', 'humblebrag', 'hot takes', 'negative',
+          'beginner friendly', 'low quality'
+        ]);
+        const isQualityTag = QUALITY_META_TAGS.has(normMatched);
+        if (analysis.dislike_scope === 'aspect' && !isQualityTag) {
           const hitInContent = post.tags.some(t => normalizeTag(t) === normMatched || normalizeTag(t).includes(normMatched));
           if (hitInContent) {
             console.log(`[Dislike Guardrail] Skipping subject dislike "${matchedTag}" due to dislike_scope=aspect`);
@@ -924,8 +934,8 @@ const App: React.FC = () => {
       // #endregion
     }
 
-    // Cleanup: remove zero or negative weights
-    currentInterests = currentInterests.filter(i => i.weight > 0.1);
+    // Cleanup: remove near-zero weights (but keep negative interests — they represent active dampening)
+    currentInterests = currentInterests.filter(i => i.weight > 0.1 || i.weight < -0.1);
     currentDislikes = currentDislikes.filter(d => d.weight > 0.1);
 
     const updatedProfile = {

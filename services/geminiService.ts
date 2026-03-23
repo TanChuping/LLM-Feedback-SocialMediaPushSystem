@@ -8,6 +8,10 @@ const MODEL_STRONG = "openai/gpt-oss-120b";  // Stage 1 (intent analysis), Stage
 const MODEL_FAST   = "openai/gpt-oss-20b";   // Stage 3, 4a, 4b, nickname, emoji
 const DEFAULT_KEY = " ";
 
+// Frozen vocabulary string for prompt caching stability.
+// Built once on first analyzeFeedback call, reused for the rest of the session.
+let _frozenVocabularyList: string | null = null;
+
 /**
  * Generic Groq Fetch Wrapper with Retry Logic for 429s
  */
@@ -130,25 +134,12 @@ export const analyzeFeedback = async (
     };
   }
 
-  // Limit vocabulary size to prevent context overflow, but keep enough for variety
-  // IMPORTANT: availableTags is already deduplicated and ordered (EXPLICIT_TAGS first, then POST_DERIVED_TAGS)
-  // So the first 300 tags will include all explicit tags plus the most common post-derived tags
-  const vocabularyList = availableTags.slice(0, 300).join('", "');
-  
-  // Log which tags are included/excluded for debugging
-  if (availableTags.length > 300) {
-    console.log(`[analyzeFeedback] Using first 300 of ${availableTags.length} tags. Excluded: ${availableTags.slice(300, 310).join(', ')}...`);
+  // Freeze vocabulary on first call — identical string for every subsequent call guarantees prompt cache hits
+  if (_frozenVocabularyList === null) {
+    _frozenVocabularyList = availableTags.join('", "');
+    console.log(`[analyzeFeedback] ✅ Vocabulary frozen: ${availableTags.length} tags (${_frozenVocabularyList.length} chars). Reused for all future calls this session.`);
   }
-  
-  // Log for debugging
-  if (vocabularyList.length === 0) {
-    console.error('[analyzeFeedback] ⚠️ vocabularyList is empty after processing!', {
-      availableTagsLength: availableTags.length,
-      availableTagsSample: availableTags.slice(0, 5)
-    });
-  } else {
-    console.log(`[analyzeFeedback] ✅ Vocabulary loaded: ${availableTags.length} tags, using first ${Math.min(300, availableTags.length)}`);
-  }
+  const vocabularyList = _frozenVocabularyList;
 
   // Check if profile is empty to provide better context to LLM
   const isProfileEmpty = !profileInterests || profileInterests.trim().length === 0;
@@ -161,6 +152,14 @@ export const analyzeFeedback = async (
     Your goal is to parse user feedback and output specific, *weighted* adjustments to their profile tags.
 
     CRITICAL INSTRUCTIONS:
+
+    0. **CONTEXT REASONING (do this FIRST before any adjustment)**:
+       Before producing adjustments, mentally resolve these questions:
+       a) **What is the TARGET?** CONTENT_CONTEXT tells you the post's title and tags. Pronouns/deictics in the feedback ("这玩意/这个/it/this thing") almost always refer to the target post's subject, NOT to other entities the user mentions.
+       b) **Who wins, who loses?** If the user compares A vs B (e.g., "AI replaced Grammarly / X比Y强 / A把B爆了"), A is viewed positively and B is viewed negatively. Do NOT flip this. The LOSER (target post's subject, if applicable) gets the negative adjustment; the WINNER gets positive or neutral.
+       c) **What does the user actually want to see less/more of?** Rephrase the feedback as "User wants MORE ___ and LESS ___" before choosing tags. If you cannot clearly say the user wants LESS of a topic, do NOT add it as a dislike.
+       d) **Distinguish REASON from TARGET**: If the user cites X as the reason they dislike Y, X is NOT what they dislike. Example: "AI审稿把Grammarly爆了" → target=Grammarly (negative), reason=AI (neutral/positive). Do NOT dislike the reason.
+
     1. **HIERARCHY IS KING**: 
        - **PRIMARY Signal (The core topic/intent):** Delta 6 to 9.
        - **SECONDARY Context (Related topics):** Delta 1 to 3.
@@ -214,11 +213,13 @@ export const analyzeFeedback = async (
        - In that case set dislike_scope="topic" and apply dislike adjustments to relevant tags if they exist in VOCABULARY_SAMPLE (e.g., "🌙 Nightlife", "🍷 Alcohol", "💃 Clubbing").
        - Do NOT reduce unrelated umbrella topics (e.g., "🎶 Music") just because a nightlife post mentions music as secondary.
 
-    6.6 **MILD DISINTEREST (light damping, not hate)**:
-       - If the user shows mild disinterest / indifference (e.g., “不太想看/没啥兴趣/一般般/无感/不在意”) WITHOUT strong disgust/hate language:
-         - Prefer a small NEGATIVE interest delta on the relevant topic tag: category="interest", delta = -2 or -3 (only if the tag exists in VOCABULARY_SAMPLE).
-         - Do NOT create a strong topic dislike for this case.
-       - If the user says "完全不在意/随便/别再推" you may still use stronger negative interest delta (-4 to -6), but avoid adding a full dislike unless they explicitly hate it.
+    6.6 **DISINTEREST / INDIFFERENCE (damping, not hate)**:
+       - If the user shows mild disinterest / indifference (e.g., “不太想看/没啥兴趣/一般般/无感/不在意”) WITHOUT strong disgust/hate, use category="interest" with NEGATIVE delta. Refer to SCALING table:
+         - Truly mild ("一般般/无感"): delta -2 to -3
+         - Clear disinterest ("无所谓/不关心/不住在这里"): delta -4 to -5
+         - Fatigue ("看腻了/吃够了/够了"): delta -5 to -6
+       - Do NOT create category="dislike" for this; use negative interest deltas to dampen.
+       - Apply to ALL relevant tags, not just the primary.
 
     7. **PREFERENCE TARGETS (structure)**:
        - Output preference_targets (max 3) to explicitly label what the feedback targets:
@@ -258,11 +259,17 @@ export const analyzeFeedback = async (
        - Always use the FULL tag name from VOCABULARY_SAMPLE, never just emoji or just text
 
     9. **SCALING**:
-       - "I love this": Primary +6, Secondary +2
-       - "Show me more": Primary +4
-       - "I hate this": Dislike +8 (Strong filter)
-       - "Not for me": Dislike +4
-       - **MAX DELTA IS 10.**
+       Positive:
+       - "I love this / 爱了": Primary +6, Secondary +2
+       - "Show me more / 多来点": Primary +4
+       Negative (category="dislike"):
+       - "I hate this / 恶心死了": Dislike +8 (Strong filter)
+       - "Not for me / 不是我的菜": Dislike +4
+       Negative (category="interest", negative delta — for damping without creating a dislike):
+       - "Meh / 无感 / 一般般": delta -2 to -3
+       - "I don't care / 无所谓 / 不关心 / 不relevant to me / 我不住在这里": delta -4 to -5
+       - "Tired of this / 看腻了 / 吃够了 / 够了": delta -5 to -6
+       - **MAX DELTA magnitude is 10.**
 
     10. **EMPTY PROFILE HANDLING**:
        - If CURRENT_PROFILE shows empty LIKES, treat this as a fresh start.

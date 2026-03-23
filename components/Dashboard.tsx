@@ -102,15 +102,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
     for (const it of userProfile.interests || []) {
       const k = normalizeTag(it.tag);
       const prev = map.get(k);
-      const nextInterest = Math.max(prev?.interest ?? 0, it.weight ?? 0);
-      map.set(k, {
-        key: k,
-        tag: prev?.tag || it.tag,
-        interest: nextInterest,
-        negative: prev?.negative ?? 0,
-        net: 0,
-        mixed: false
-      });
+      const w = it.weight ?? 0;
+      if (w >= 0) {
+        const nextInterest = Math.max(prev?.interest ?? 0, w);
+        map.set(k, {
+          key: k,
+          tag: prev?.tag || it.tag,
+          interest: nextInterest,
+          negative: prev?.negative ?? 0,
+          net: 0,
+          mixed: false
+        });
+      } else {
+        const absW = Math.abs(w);
+        const nextNegative = Math.max(prev?.negative ?? 0, absW);
+        map.set(k, {
+          key: k,
+          tag: prev?.tag || it.tag,
+          interest: prev?.interest ?? 0,
+          negative: nextNegative,
+          net: 0,
+          mixed: false
+        });
+      }
     }
     for (const d of userProfile.dislikes || []) {
       const k = normalizeTag(d.tag);
@@ -265,7 +279,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   className="w-6 h-6 rounded-full bg-white/50 border border-white/40 text-gray-600 hover:text-gray-900 hover:bg-white/70 text-xs font-black leading-none flex items-center justify-center transition-colors"
                   aria-label={t(language, 'personaFunInfoAria')}
                   aria-expanded={showFunInfo}
-                  title={t(language, 'personaFunInfo')}
                   onFocus={() => setShowFunInfo(true)}
                   onBlur={() => setShowFunInfo(false)}
                   onClick={() => setShowFunInfo(v => !v)}

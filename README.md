@@ -48,7 +48,7 @@ flowchart TD
   Stage2 --> ApplyGuard[ApplyGuard:Top10RedflagGuardrail]
   ApplyGuard --> UIApply[UI:ApplyOrPending]
   UIApply --> Stage3[Stage3:LLM_ProfileCleanup]
-  UIApply --> Stage4a[Stage4a:FastPersonaSignals]
+  UIApply --> Stage4a[Stage4a:PersonaSignals_StrongModel]
   Stage4a --> Stage2Refine[Stage2Refine:RerankWithSignals+Banner]
   UIApply --> Stage4b[Stage4b:Nickname+Description+EmojiFusion]
   Stage4b --> FeedbackMem
@@ -113,7 +113,7 @@ flowchart TD
      - **Grace period**: tags that were **just boosted** are passed as `RECENTLY_BOOSTED_TAGS` and should not be immediately decayed.
 
 9. **Stage 4: Persona (Background, split)**
-   - **Stage 4a (fast, strong model)**: emits `user_traits`, `red_flags`, `red_flag_keywords` → immediately triggers a refined Stage 2 rerank + UI banner.
+   - **Stage 4a (strong model)**: emits `user_traits`, `red_flags`, `red_flag_keywords` → immediately triggers a refined Stage 2 rerank + UI banner.
    - **Stage 4b (slow UI)**: nickname/description/emoji fusion updates the UI only (no further rerank). The generated persona description is also stored in Feedback Memory and fed back to Stage 2 as `PERSONA_SUMMARY`.
 
 **Note (Nuance without collateral damage):**
