@@ -26,15 +26,12 @@ async function callGroqWithRetry(
   const effectiveKey = apiKey || DEFAULT_KEY;
 
   if (!effectiveKey || effectiveKey.trim().length === 0) {
-    console.error(`[${tag}] ❌ No Groq API Key provided. apiKey:`, apiKey ? `Present (${apiKey.length} chars)` : 'Missing', 'DEFAULT_KEY:', DEFAULT_KEY ? 'Present' : 'Missing');
+    console.error(`[${tag}] No Groq API Key provided.`);
     throw new Error("No Groq API Key provided.");
   }
-  
-  console.log(`[${tag}] 🔑 Using API key:`, effectiveKey ? `Present (${effectiveKey.length} chars)` : 'Missing');
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      // Prevent "infinite hang" if the request stalls (common cause of UI stuck at "analyzing").
       const controller = new AbortController();
       const timeoutMs = 25000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -59,7 +56,6 @@ async function callGroqWithRetry(
       if (response.status === 429) {
         const errorText = await response.text();
         console.warn(`[${tag}] Rate Limit (429) hit. Attempt ${attempt + 1}/${retries}. Retrying...`);
-        // Exponential backoff: 1s, 2s, 4s
         await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
         continue;
       }
@@ -68,7 +64,6 @@ async function callGroqWithRetry(
         const errorText = await response.text();
         console.error(`[${tag}] Groq API Error (${response.status}):`, errorText.substring(0, 500));
         
-        // 检查是否是 token 相关错误
         if (response.status === 400 && (errorText.includes('token') || errorText.includes('length'))) {
           throw new Error(`Token limit exceeded or invalid request. Status: ${response.status}`);
         }
@@ -79,7 +74,6 @@ async function callGroqWithRetry(
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content;
       
-      // 记录 token 使用情况（如果有）
       if (data.usage) {
         console.log(`[${tag}] Token usage:`, {
           prompt_tokens: data.usage.prompt_tokens,
@@ -93,7 +87,6 @@ async function callGroqWithRetry(
       return jsonMode ? JSON.parse(content) : content;
 
     } catch (error: any) {
-      // If aborted due to timeout, retry like other transient errors
       if (error?.name === 'AbortError') {
         console.warn(`[${tag}] Request timed out. Attempt ${attempt + 1}/${retries}. Retrying...`);
       }

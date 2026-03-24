@@ -526,25 +526,40 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleSaveKey = () => {
+  const handleSaveKey = async () => {
     const raw = tempKeyInput.trim();
     if (raw.length === 0) return;
 
     let finalKey = raw;
+
+    // Short input = password → ask backend to decrypt
     if (raw.length <= 12) {
-      const h = "1712182c12053c1d4864076527244334121a280b5e7d5a762726170a155c343d64030b5a032b1a301b233a1d420a5c0505333d3c1f3b171d";
-      let d = "";
-      for (let i = 0; i < h.length; i += 2) {
-        d += String.fromCharCode(parseInt(h.substr(i, 2), 16) ^ raw.charCodeAt((i / 2) % raw.length));
+      try {
+        const verifyUrl = ((import.meta as any).env?.VITE_VERIFY_URL) || '/api/verify';
+        const res = await fetch(verifyUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: raw }),
+        });
+        const data = await res.json();
+        if (data.valid && data.key) {
+          finalKey = data.key;
+        } else {
+          addLog('PROFILE_UPDATE', 'Password Verification Failed', { note: 'Invalid password' });
+          return;
+        }
+      } catch (e: any) {
+        console.error('[handleSaveKey] Verify request failed:', e);
+        addLog('PROFILE_UPDATE', 'Password Verification Failed', { note: 'Server unreachable' });
+        return;
       }
-      if (d.startsWith("gsk_")) finalKey = d;
     }
 
     if (finalKey.length > 10) {
       setApiKey(finalKey);
       localStorage.setItem('GROQ_API_KEY', finalKey);
       setIsKeySaved(true);
-      addLog('PROFILE_UPDATE', 'Groq API Key Updated', { status: 'New Key Saved', length: finalKey.length });
+      addLog('PROFILE_UPDATE', 'API Key Updated', { status: 'Saved' });
     }
   };
 

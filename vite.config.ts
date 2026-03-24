@@ -16,10 +16,12 @@ export default defineConfig(({ mode }) => {
       console.warn('No .env file found, using defaults');
     }
     
-    // 开发模式使用根路径，生产模式使用 GitHub Pages 路径
-    // 注意：GitHub Actions 构建时 mode 是 'production'
+    // VITE_BASE_PATH controls the deploy prefix:
+    //   GitHub Pages → "/LLM-Feedback-SocialMediaPushSystem/"  (set in GitHub Actions)
+    //   Vercel       → "/"  (default)
+    //   Dev          → "/"
     const isDev = mode === 'development';
-    const base = isDev ? '/' : '/LLM-Feedback-SocialMediaPushSystem/';
+    const base = isDev ? '/' : ((env as any).VITE_BASE_PATH || '/');
     
     console.log(`[Vite Config] Mode: ${mode}, Base: ${base}`);
     
@@ -31,6 +33,12 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          '/api': {
+            target: 'http://localhost:3001',
+            changeOrigin: true,
+          },
+        },
       },
       plugins: [react()],
       build: {

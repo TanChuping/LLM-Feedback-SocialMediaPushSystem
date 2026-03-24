@@ -8,10 +8,13 @@
     "prebuild": "node scripts/buildEmojiIndex.js",
     "dev": "vite",
     "dev:clean": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
+    "server": "node server/proxy.js",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
     "framer-motion": "^11.0.0",
     "lucide-react": "^0.344.0",
     "react": "^18.2.0",

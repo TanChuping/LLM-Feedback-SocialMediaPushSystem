@@ -34,6 +34,8 @@ jobs:
         run: npm run build
         env:
           NODE_ENV: production
+          VITE_BASE_PATH: /LLM-Feedback-SocialMediaPushSystem/
+          VITE_VERIFY_URL: ${{ vars.VITE_VERIFY_URL }}
 
       - name: Check dist directory
         run: |
